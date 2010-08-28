@@ -8,10 +8,10 @@ LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
 DEBUG=-g
 
 libheapster.jnilib: heapster.o java_crw_demo/java_crw_demo.o
-	$(CC) $(DEBUG) $(LDFLAGS) -o $@ $< -lc
+	$(CC) $(DEBUG) $(LDFLAGS) -o $@ $^ -lc
 
 %.o: %.c
-	$(CC) $(DEBUG) $(CFLAGS) -c $<
+	$(CC) $(DEBUG) $(CFLAGS) -o $@ -c $<
 
 clean:
 	rm -f *.o
