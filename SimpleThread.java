@@ -31,7 +31,11 @@ class MyThread implements Runnable {
    public void run() {
      /* NO-OP */
 		try {
-			"a".getBytes("ASCII");
+                  for (int i = 0; i < 100000; i++) {
+                    char[] hey = new char[1000];
+                  }
+
+                        "a".getBytes("ASCII");
 			excep();
 			Thread.sleep(1000);
 		} catch (java.lang.InterruptedException e){

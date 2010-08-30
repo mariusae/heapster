@@ -7,11 +7,16 @@ LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
         -static-libgcc -mimpure-text -shared
 DEBUG=-g
 
+all: libheapster.jnilib HeapsterHelper.class
+
 libheapster.jnilib: heapster.o java_crw_demo/java_crw_demo.o
 	$(CC) $(DEBUG) $(LDFLAGS) -o $@ $^ -lc
 
 %.o: %.c
 	$(CC) $(DEBUG) $(CFLAGS) -o $@ -c $<
+
+%.class: %.java
+	javac $<
 
 clean:
 	rm -f *.o
