@@ -1,3 +1,6 @@
+* RUNNING
+
+java -Xbootclasspath/a:. -agentlib:heapster SimpleThread
 
 
 

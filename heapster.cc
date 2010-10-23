@@ -63,6 +63,37 @@ class Heapster {
  public:
   static const char* const kHelperClass;
   static const char* const kHelperField_IsReady;
+  static Heapster* instance;
+
+  // * Static JNI hooks.
+  static void JNI_NewObject(
+      JNIEnv* env, jclass klass,
+      jthread thread, jobject o) {
+    warnx("new object!\n");
+  }
+
+  // * Static JVMTI hooks
+  static void JNICALL JVMTI_VMStart(jvmtiEnv *jvmti, JNIEnv *env) {
+    instance->VMStart(env);
+  }
+   
+  static void JNICALL JVMTI_VMDeath(jvmtiEnv *jvmti, JNIEnv *env) {
+    // heapster->VMDeath();
+  }
+   
+  static void JNICALL JVMTI_ObjectFree(jvmtiEnv *jvmti, jlong tag) {
+    // heapster->ObjectFree(tag);
+  }
+
+  static void JNICALL JVMTI_ClassFileLoadHook(
+      jvmtiEnv *jvmti, JNIEnv* env,
+      jclass class_being_redefined, jobject loader,
+      const char* name, jobject protection_domain,
+      jint class_data_len, const unsigned char* class_data,
+      jint* new_class_data_len, unsigned char** new_class_data) {
+  }
+
+  // * Instance methods.
 
   Heapster(jvmtiEnv* jvmti) : jvmti_(jvmti), vm_started_(false) {
     Setup();
@@ -71,17 +102,15 @@ class Heapster {
   void VMStart(JNIEnv* env) {
     jclass klass;
     static JNINativeMethod registry[] = {
-      { "_newObject", "(Ljava/lang/Object;Ljava/lang/Object;)V",
-        (void *)&NewObjectJNI }
+      { (char*)"_newObject",
+        (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
+        (void *)&Heapster::JNI_NewObject }
     };
 
     klass = env->FindClass(kHelperClass);
-    warnx("klass = %p\n", klass);
     if ((klass = env->FindClass(kHelperClass)) == NULL)
       errx(3, "Failed to find the heapster helper class (%s)\n", kHelperClass);
 
-    warnx("Found the heapster helper class\n");
-    
     { // Register natives.
       Locker l(jvmti_, monitor_);
       vm_started_ = true;
@@ -119,10 +148,10 @@ class Heapster {
 
     jvmtiEventCallbacks cb; 
     memset(&cb, 0, sizeof(cb));
-    cb.VMStart           = &VMStartCB;
-    cb.VMDeath           = &VMDeathCB;
-    cb.ObjectFree        = &ObjectFreeCB;
-    cb.ClassFileLoadHook = &ClassFileLoadHookCB;
+    cb.VMStart           = &Heapster::JVMTI_VMStart;
+    cb.VMDeath           = &Heapster::JVMTI_VMDeath;
+    cb.ObjectFree        = &Heapster::JVMTI_ObjectFree;
+    cb.ClassFileLoadHook = &Heapster::JVMTI_ClassFileLoadHook;
     Assert(jvmti_->SetEventCallbacks(&cb, (jint)sizeof(cb)),
            "failed to set callbacks");
 
@@ -148,32 +177,10 @@ class Heapster {
 
 const char* const Heapster::kHelperClass = "HeapsterHelper";
 const char* const Heapster::kHelperField_IsReady = "isReady";
+Heapster* Heapster::instance = NULL;
 
-
-static Heapster* heapster;
-
-static void JNICALL VMStartCB(jvmtiEnv *jvmti, JNIEnv *env) {
-  heapster->VMStart(env);
-}
-
-static void JNICALL VMDeathCB(jvmtiEnv *jvmti, JNIEnv *env) {
-  // heapster->VMDeath();
-}
-
-static void JNICALL ObjectFreeCB(jvmtiEnv *jvmti, jlong tag) {
-  // heapster->ObjectFree(tag);
-}
-
-static void JNICALL ClassFileLoadHookCB(
-    jvmtiEnv *jvmti, JNIEnv* env,
-    jclass class_being_redefined, jobject loader,
-    const char* name, jobject protection_domain,
-    jint class_data_len, const unsigned char* class_data,
-    jint* new_class_data_len, unsigned char** new_class_data) {
-  
-}
-
-// JVMTI
+// This instantiates a singleton for the above heapster class, which
+// is used in subsequent hooks.
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM* jvm, char* options, void* _unused) {
   jvmtiEnv* jvmti = NULL;
 
@@ -183,11 +190,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM* jvm, char* options, void* _unused) {
     exit(1);
   }
 
-  heapster = new Heapster(jvmti);
+  Heapster::instance = new Heapster(jvmti);
 
-  printf("Started heapster!\n");
   return JNI_OK;
-}
-
-static void NewObjectJNI(JNIEnv* env, jclass klass, jthread thread, jobject o) {  warnx("new object!\n");
 }
