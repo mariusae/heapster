@@ -61,14 +61,11 @@ class Monitor {
 class Locker {
  public:
   inline explicit Locker(Monitor* monitor) {
-    Locker(monitor->jvmti(), monitor->monitor());
+    lock(monitor->jvmti(), monitor->monitor());
   }
 
-  inline explicit Locker(jvmtiEnv* jvmti, jrawMonitorID monitor)
-      : jvmti_(jvmti), monitor_(monitor) {
-    jvmtiError error = jvmti_->RawMonitorEnter(monitor_);
-    if (error != JVMTI_ERROR_NONE)
-      errx(3, "Failed to lock monitor");
+  inline explicit Locker(jvmtiEnv* jvmti, jrawMonitorID monitor) {
+    lock(jvmti, monitor);
   }
 
   inline ~Locker() {
@@ -78,21 +75,31 @@ class Locker {
   }
 
  private:
+  void lock(jvmtiEnv* jvmti, jrawMonitorID monitor) {
+    jvmti_ = jvmti;
+    monitor_ = monitor;
+
+    jvmtiError error = jvmti_->RawMonitorEnter(monitor_);
+    if (error != JVMTI_ERROR_NONE)
+      errx(3, "Failed to lock monitor");
+  }
+
   jvmtiEnv* jvmti_;
   jrawMonitorID monitor_;
 };
 
+#define HELPER_CLASS "HeapsterHelper"
+#define HELPER_FIELD_ISREADY "isReady"
+
 class Heapster {
  public:
-  static const char* const kHelperClass;
-  static const char* const kHelperField_IsReady;
   static Heapster* instance;
 
   // * Static JNI hooks.
   static void JNI_NewObject(
       JNIEnv* env, jclass klass,
       jthread thread, jobject o) {
-    warnx("new object!\n");
+    instance->NewObject(env, klass, thread, o);
   }
 
   // * Static JVMTI hooks
@@ -122,8 +129,15 @@ class Heapster {
 
   // * Instance methods.
 
-  Heapster(jvmtiEnv* jvmti) : jvmti_(jvmti), vm_started_(false) {
+  Heapster(jvmtiEnv* jvmti)
+      : jvmti_(jvmti), raw_monitor_(NULL), monitor_(NULL),
+        class_count_(0), vm_started_(false) {
     Setup();
+  }
+
+  ~Heapster() {
+    // TODO: deallocate raw_monitor.
+    delete monitor_;
   }
 
   void VMStart(JNIEnv* env) {
@@ -134,22 +148,23 @@ class Heapster {
         (void *)&Heapster::JNI_NewObject }
     };
 
-    klass = env->FindClass(kHelperClass);
-    if ((klass = env->FindClass(kHelperClass)) == NULL)
-      errx(3, "Failed to find the heapster helper class (%s)\n", kHelperClass);
+    klass = env->FindClass(HELPER_CLASS);
+    if ((klass = env->FindClass(HELPER_CLASS)) == NULL)
+      errx(3, "Failed to find the heapster helper class (%s)\n", HELPER_CLASS);
 
     { // Register natives.
       Locker l(monitor_);
       vm_started_ = true;
 
+      // TODO: Does this need to be inside of the lock?
       if (env->RegisterNatives(klass, registry, arraysize(registry)) != 0)
-        errx(3, "Failed to register natives for %s", kHelperClass);
+        errx(3, "Failed to register natives for %s", HELPER_CLASS);
     }
 
     // Set the static field to hint the helper.
-    jfieldID field = env->GetStaticFieldID(klass, kHelperField_IsReady, "I");
+    jfieldID field = env->GetStaticFieldID(klass, HELPER_FIELD_ISREADY, "I");
     if (field == NULL)
-      errx(3, "Failed to get %s field\n", kHelperField_IsReady);
+      errx(3, "Failed to get %s field\n", HELPER_FIELD_ISREADY);
 
     env->SetStaticIntField(klass, field, 1);
   }
@@ -173,11 +188,57 @@ class Heapster {
     }
 
     // Ignore the helper class.
-    if (strcmp(classname, kHelperClass) == 0)
+    if (strcmp(classname, HELPER_CLASS) == 0)
       return;
 
-    
+    int class_num;
+    bool is_system_class;
+    {
+      Locker l(monitor_);
+      class_num = class_count_++;
+      is_system_class = !vm_started_;
+    }
 
+    // The big magic: rewrite the class with our instrumentation.
+    unsigned char *new_image = NULL;
+    long new_length = 0L;
+
+    java_crw_demo(
+      class_num,
+      classname,
+      class_data,
+      class_data_len,
+      is_system_class ? 1 : 0,
+      (char*)HELPER_CLASS,
+      (char*)("L" HELPER_CLASS ";"),
+      NULL, NULL,
+      NULL, NULL,
+      (char*)"newObject", (char*)"(Ljava/lang/Object;)V",
+      (char*)"newObject", (char*)"(Ljava/lang/Object;)V",
+      &new_image,
+      &new_length,
+      NULL, NULL);
+
+    if (new_length > 0L) {
+      // Success. We now need to allocate it with the JVMTI allocator,
+      // copy the definition there, and set the corresponding
+      // pointers.
+      void *bufp;
+      Assert(jvmti_->Allocate(new_length, (unsigned char **)&bufp),
+             "failed to allocate buffer for new classfile");
+
+      memcpy(bufp, new_image, new_length);
+      *new_class_data_len = (jint)new_length;
+      *new_class_data = (unsigned char*)bufp;
+    }
+
+    if (new_image != NULL)
+      free(new_image);
+  }
+
+
+  void NewObject(JNIEnv* env, jclass klass, jthread thread, jobject o) {
+    x
   }
 
  private:
@@ -229,11 +290,10 @@ class Heapster {
   jrawMonitorID raw_monitor_;
   Monitor*      monitor_;
 
-  bool          vm_started_;
+  int  class_count_;
+  bool vm_started_;
 };
 
-const char* const Heapster::kHelperClass = "HeapsterHelper";
-const char* const Heapster::kHelperField_IsReady = "isReady";
 Heapster* Heapster::instance = NULL;
 
 // This instantiates a singleton for the above heapster class, which
