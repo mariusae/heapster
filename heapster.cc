@@ -39,8 +39,31 @@ static void JNICALL ClassFileLoadHookCB(
     jint* new_class_data_len, unsigned char** new_class_data);
 static void NewObjectJNI(JNIEnv* env, jclass klass, jthread thread, jobject o);
 
+class Monitor {
+ public:
+  inline explicit Monitor(jvmtiEnv* jvmti, jrawMonitorID monitor)
+      : jvmti_(jvmti), monitor_(monitor)
+  {}
+        
+  jvmtiEnv* jvmti() {
+    return jvmti_;
+  }
+
+  jrawMonitorID monitor() {
+    return monitor_;
+  }
+
+ private:
+  jvmtiEnv* jvmti_;
+  jrawMonitorID monitor_;
+};
+
 class Locker {
  public:
+  inline explicit Locker(Monitor* monitor) {
+    Locker(monitor->jvmti(), monitor->monitor());
+  }
+
   inline explicit Locker(jvmtiEnv* jvmti, jrawMonitorID monitor)
       : jvmti_(jvmti), monitor_(monitor) {
     jvmtiError error = jvmti_->RawMonitorEnter(monitor_);
@@ -91,6 +114,10 @@ class Heapster {
       const char* name, jobject protection_domain,
       jint class_data_len, const unsigned char* class_data,
       jint* new_class_data_len, unsigned char** new_class_data) {
+    instance->ClassFileLoadHook(
+        jvmti, env, class_being_redefined, loader, name,
+        protection_domain, class_data_len, class_data,
+        new_class_data_len, new_class_data);
   }
 
   // * Instance methods.
@@ -112,7 +139,7 @@ class Heapster {
       errx(3, "Failed to find the heapster helper class (%s)\n", kHelperClass);
 
     { // Register natives.
-      Locker l(jvmti_, monitor_);
+      Locker l(monitor_);
       vm_started_ = true;
 
       if (env->RegisterNatives(klass, registry, arraysize(registry)) != 0)
@@ -125,6 +152,32 @@ class Heapster {
       errx(3, "Failed to get %s field\n", kHelperField_IsReady);
 
     env->SetStaticIntField(klass, field, 1);
+  }
+
+  void JNICALL ClassFileLoadHook(
+      jvmtiEnv *jvmti, JNIEnv* env,
+      jclass class_being_redefined, jobject loader,
+      const char* name, jobject protection_domain,
+      jint class_data_len, const unsigned char* class_data,
+      jint* new_class_data_len, unsigned char** new_class_data) {
+    // This is where the magic rewriting happens.
+
+    char* classname;
+    if (name == NULL) {
+      classname = java_crw_demo_classname(class_data, class_data_len, NULL);
+      if (classname == NULL)
+        errx(3, "Failed to find classname\n");
+    } else {
+      if ((classname = strdup(name)) == NULL)
+        errx(3, "malloc failed\n");
+    }
+
+    // Ignore the helper class.
+    if (strcmp(classname, kHelperClass) == 0)
+      return;
+
+    
+
   }
 
  private:
@@ -166,12 +219,16 @@ class Heapster {
              "failed to set event notification mode");
     }
 
-    Assert(jvmti_->CreateRawMonitor("heapster state", &monitor_),
+    Assert(jvmti_->CreateRawMonitor("heapster state", &raw_monitor_),
            "failed to create heapster monitor");
+
+    monitor_ = new Monitor(jvmti_, raw_monitor_);
   }
 
   jvmtiEnv*     jvmti_;
-  jrawMonitorID monitor_;
+  jrawMonitorID raw_monitor_;
+  Monitor*      monitor_;
+
   bool          vm_started_;
 };
 
