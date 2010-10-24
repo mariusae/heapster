@@ -90,18 +90,21 @@ class Heapster {
         : next(_next),
           hash(_hash),
           nframes(_nframes),
-          stack(new pair<jmethodID, jlocation>[_nframes]),
+          stack(new jlocation[_nframes]),
           num_allocs(0),
-          num_bytes(0) {}
+          num_bytes(0) {
+      for (int i = 0; i < nframes; ++i)
+        stack[i] = frames[i].location;
+    }
 
     ~Site() {
       delete stack;
     }
 
-    Site*                       next;
-    long                        hash;
-    int                         nframes;
-    pair<jmethodID, jlocation>* stack;
+    Site*      next;
+    long       hash;
+    int        nframes;
+    jlocation* stack;
 
     // Stats.
     int num_allocs;
@@ -118,20 +121,20 @@ class Heapster {
   }
 
   // * Static JVMTI hooks
-  static void JNICALL JVMTI_VMStart(jvmtiEnv *jvmti, JNIEnv *env) {
+  static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
   }
    
-  static void JNICALL JVMTI_VMDeath(jvmtiEnv *jvmti, JNIEnv *env) {
-    // heapster->VMDeath();
+  static void JNICALL JVMTI_VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
+    instance->VMDeath(jvmti, env);
   }
-   
-  static void JNICALL JVMTI_ObjectFree(jvmtiEnv *jvmti, jlong tag) {
+
+  static void JNICALL JVMTI_ObjectFree(jvmtiEnv* jvmti, jlong tag) {
     // heapster->ObjectFree(tag);
   }
 
   static void JNICALL JVMTI_ClassFileLoadHook(
-      jvmtiEnv *jvmti, JNIEnv* env,
+      jvmtiEnv* jvmti, JNIEnv* env,
       jclass class_being_redefined, jobject loader,
       const char* name, jobject protection_domain,
       jint class_data_len, const unsigned char* class_data,
@@ -183,6 +186,21 @@ class Heapster {
       errx(3, "Failed to get %s field\n", HELPER_FIELD_ISREADY);
 
     env->SetStaticIntField(klass, field, 1);
+  }
+
+  void JNICALL VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
+    int count = 0;
+    int total_num_bytes = 0, total_num_allocs = 0;
+    for (uint32_t i = 0; i < kHashTableSize; ++i) {
+      for (Site* s = sites_[i]; s != NULL; s = s->next) {
+        ++count;
+        total_num_bytes += s->num_bytes;
+        total_num_allocs += s->num_allocs;
+      }
+    }
+
+    warnx("dying with %d sites %d allocations and a total of %d bytes\n",
+          count, total_num_allocs, total_num_bytes);
   }
 
   void JNICALL ClassFileLoadHook(
@@ -256,6 +274,16 @@ class Heapster {
     jvmtiFrameInfo frames[100];
     jint nframes;
 
+    // TODO: first, get the size & determine whether we should be
+    // sampling.
+
+    // NOTE: much of this code is not re-entrant.  do something about
+    // that!  the linked list part can be implemented as a concurrent
+    // datastructures, or maybe just using spinlocks [eg. from google
+    // perftools].  incrementing/decrementing allocations can be done
+    // atomically.  it's all commutative anyway.  the list entries
+    // themselves can be CASd in.
+
     // Subtract 2 stack frames to start outside of our own code. TODO:
     // use AsyncGetStackTrace?
     jvmtiError error =
@@ -263,6 +291,7 @@ class Heapster {
             thread, 2, arraysize(frames),
             frames, &nframes);
 
+    // TODO: keep track of these?
     if (error == JVMTI_ERROR_WRONG_PHASE)
       return;
 
@@ -282,8 +311,7 @@ class Heapster {
       if (s->hash == h && s->nframes == nframes) {
         int i = 0;
         for (; i < nframes; i++) {
-          if (frames[i].method != s->stack[i].first ||
-              frames[i].location != s->stack[i].second) {
+          if (frames[i].location != s->stack[i]) {
             break;
           }
         }
@@ -294,7 +322,7 @@ class Heapster {
     }
 
     if (s == NULL)
-      s = new Site(sites_[bucket], h, nframes, frames);
+      sites_[bucket] = s = new Site(sites_[bucket], h, nframes, frames);
 
     jlong size;
     Assert(jvmti_->GetObjectSize(o, &size),
@@ -302,6 +330,8 @@ class Heapster {
 
     s->num_allocs++;
     s->num_bytes += size;
+
+// jvmti_->SetTag(o, 123);
   }
 
  private:
