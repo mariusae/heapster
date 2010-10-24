@@ -1,10 +1,17 @@
+#include <sys/types.h>
+#include <sys/stat.h>
+
 #include <string>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <jvmti.h>
 #include <string.h>
+#include <fcntl.h>
 #include <map>
 #include "java_crw_demo.h"
+
+// NB: only works on little-endian machines
 
 using namespace std;
 
@@ -27,6 +34,38 @@ void errx(int code, const char *fmt, ...) {
   fflush(stderr);
   va_end(ap);
   exit(code);
+}
+
+// Bogarted from various OpenBSD.
+size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
+                int fd, void* _s, size_t n) {
+  char* s = reinterpret_cast<char*>(_s);
+  size_t pos = 0;
+  ssize_t res;
+  
+  while (n > pos) {
+    res = (f) (fd, s + pos, n - pos);
+    switch (res) {
+      case -1:
+        if (errno == EINTR || errno == EAGAIN)
+          continue;
+        return 0;
+      case 0:
+        errno = EPIPE;
+        return pos;
+      default:
+        pos += (u_int)res;
+    }
+  }
+
+  return pos;
+}
+
+void AtomicWrite(int fd, char* buf, int n) {
+  if (AtomicIO(write, fd, (void*)buf, n) != (size_t)n) {
+    perror("AtomicWrite");
+    exit(1);
+  }
 }
 
 class Monitor {
@@ -84,6 +123,7 @@ class Lock {
 class Heapster {
  public:
   static const uint32_t kHashTableSize;
+  static const uint32_t kMaxStackFrames;
 
   struct Site {
     Site(Site* _next, long _hash, int _nframes, jvmtiFrameInfo* frames)
@@ -189,10 +229,43 @@ class Heapster {
   }
 
   void JNICALL VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
+    char* profile_path = getenv("HEAPPROFILE");
+    if (profile_path == NULL)
+      return;
+
+    int fd = open(profile_path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+      perror("open");
+      return;
+    }
+
+    // Write out symbol information (traverse the sites & resolve
+    // method names.)
+
     int count = 0;
     int total_num_bytes = 0, total_num_allocs = 0;
+
+
+    uintptr_t buf[2 + kMaxStackFrames];
+
+    // Write out the header.
+    buf[0] = 0;
+    buf[1] = 3;
+    buf[2] = 0;
+    buf[3] = 1;
+    buf[4] = 0;
+
+    AtomicWrite(fd, reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
+
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
       for (Site* s = sites_[i]; s != NULL; s = s->next) {
+        buf[0] = s->num_bytes;          // nsamples
+        buf[1] = s->nframes;            // depth
+        memcpy(&buf[2], s->stack, s->nframes * sizeof(s->stack[0]));
+
+        AtomicWrite(fd, reinterpret_cast<char*>(buf),
+                    sizeof(buf[0]) * (2 + s->nframes));
+
         ++count;
         total_num_bytes += s->num_bytes;
         total_num_allocs += s->num_allocs;
@@ -201,6 +274,8 @@ class Heapster {
 
     warnx("dying with %d sites %d allocations and a total of %d bytes\n",
           count, total_num_allocs, total_num_bytes);
+
+    close(fd);
   }
 
   void JNICALL ClassFileLoadHook(
@@ -271,7 +346,7 @@ class Heapster {
   }
 
   void NewObject(JNIEnv* env, jclass klass, jthread thread, jobject o) {
-    jvmtiFrameInfo frames[100];
+    jvmtiFrameInfo frames[kMaxStackFrames];
     jint nframes;
 
     // TODO: first, get the size & determine whether we should be
@@ -394,6 +469,7 @@ class Heapster {
 
 // Same hash table size as TCMalloc.
 const uint32_t Heapster::kHashTableSize = 179999;
+const uint32_t Heapster::kMaxStackFrames = 100;
 Heapster* Heapster::instance = NULL;
 
 // This instantiates a singleton for the above heapster class, which
