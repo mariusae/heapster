@@ -3,9 +3,10 @@
 #include <stdlib.h>
 #include <jvmti.h>
 #include <string.h>
+#include <map>
 #include "java_crw_demo.h"
 
-using std::string;
+using namespace std;
 
 #define arraysize(a) (sizeof(a)/sizeof(*(a)))
 
@@ -28,17 +29,6 @@ void errx(int code, const char *fmt, ...) {
   exit(code);
 }
 
-static void JNICALL VMStartCB(jvmtiEnv *jvmti, JNIEnv *env);
-static void JNICALL VMDeathCB(jvmtiEnv *jvmti, JNIEnv *env);
-static void JNICALL ObjectFreeCB(jvmtiEnv *jvmti, jlong tag);
-static void JNICALL ClassFileLoadHookCB(
-    jvmtiEnv* jvmti, JNIEnv* env,
-    jclass class_being_redefined, jobject loader,
-    const char* name, jobject protection_domain,
-    jint class_data_len, const unsigned char* class_data,
-    jint* new_class_data_len, unsigned char** new_class_data);
-static void NewObjectJNI(JNIEnv* env, jclass klass, jthread thread, jobject o);
-
 class Monitor {
  public:
   inline explicit Monitor(jvmtiEnv* jvmti, jrawMonitorID monitor)
@@ -58,17 +48,17 @@ class Monitor {
   jrawMonitorID monitor_;
 };
 
-class Locker {
+class Lock {
  public:
-  inline explicit Locker(Monitor* monitor) {
+  inline explicit Lock(Monitor* monitor) {
     lock(monitor->jvmti(), monitor->monitor());
   }
 
-  inline explicit Locker(jvmtiEnv* jvmti, jrawMonitorID monitor) {
+  inline explicit Lock(jvmtiEnv* jvmti, jrawMonitorID monitor) {
     lock(jvmti, monitor);
   }
 
-  inline ~Locker() {
+  inline ~Lock() {
     jvmtiError error = jvmti_->RawMonitorExit(monitor_);
     if (error != JVMTI_ERROR_NONE)
       errx(3, "Failed to unlock monitor");
@@ -93,6 +83,31 @@ class Locker {
 
 class Heapster {
  public:
+  static const uint32_t kHashTableSize;
+
+  struct Site {
+    Site(Site* _next, long _hash, int _nframes, jvmtiFrameInfo* frames)
+        : next(_next),
+          hash(_hash),
+          nframes(_nframes),
+          stack(new pair<jmethodID, jlocation>[_nframes]),
+          num_allocs(0),
+          num_bytes(0) {}
+
+    ~Site() {
+      delete stack;
+    }
+
+    Site*                       next;
+    long                        hash;
+    int                         nframes;
+    pair<jmethodID, jlocation>* stack;
+
+    // Stats.
+    int num_allocs;
+    int num_bytes;
+  };
+
   static Heapster* instance;
 
   // * Static JNI hooks.
@@ -137,6 +152,7 @@ class Heapster {
 
   ~Heapster() {
     // TODO: deallocate raw_monitor.
+    // TODO: deallocate sites table.
     delete monitor_;
   }
 
@@ -153,7 +169,7 @@ class Heapster {
       errx(3, "Failed to find the heapster helper class (%s)\n", HELPER_CLASS);
 
     { // Register natives.
-      Locker l(monitor_);
+      Lock l(monitor_);
       vm_started_ = true;
 
       // TODO: Does this need to be inside of the lock?
@@ -194,7 +210,7 @@ class Heapster {
     int class_num;
     bool is_system_class;
     {
-      Locker l(monitor_);
+      Lock l(monitor_);
       class_num = class_count_++;
       is_system_class = !vm_started_;
     }
@@ -236,9 +252,56 @@ class Heapster {
       free(new_image);
   }
 
-
   void NewObject(JNIEnv* env, jclass klass, jthread thread, jobject o) {
-    x
+    jvmtiFrameInfo frames[100];
+    jint nframes;
+
+    // Subtract 2 stack frames to start outside of our own code. TODO:
+    // use AsyncGetStackTrace?
+    jvmtiError error =
+        jvmti_->GetStackTrace(
+            thread, 2, arraysize(frames),
+            frames, &nframes);
+
+    if (error == JVMTI_ERROR_WRONG_PHASE)
+      return;
+
+    // This hash function was adapted from Google perftools.
+    long h = 0;
+    for (int i = 0; i < nframes; i++) {
+      h += frames[i].location;
+      h += h << 10;
+      h ^= h >> 6;
+    }
+    h += h << 3;
+    h ^= h >> 11;
+
+    uint32_t bucket = h % kHashTableSize;
+    Site* s = sites_[bucket];
+    for (; s != NULL; s = s->next) {
+      if (s->hash == h && s->nframes == nframes) {
+        int i = 0;
+        for (; i < nframes; i++) {
+          if (frames[i].method != s->stack[i].first ||
+              frames[i].location != s->stack[i].second) {
+            break;
+          }
+        }
+
+        if (i == nframes)
+          break;
+      }
+    }
+
+    if (s == NULL)
+      s = new Site(sites_[bucket], h, nframes, frames);
+
+    jlong size;
+    Assert(jvmti_->GetObjectSize(o, &size),
+           "failed to get size of object");
+
+    s->num_allocs++;
+    s->num_bytes += size;
   }
 
  private:
@@ -284,16 +347,23 @@ class Heapster {
            "failed to create heapster monitor");
 
     monitor_ = new Monitor(jvmti_, raw_monitor_);
+
+    // Set up allocation site table.
+    sites_ = new Site*[kHashTableSize];
+    memset(sites_, 0, sizeof(Site*) * kHashTableSize);
   }
 
   jvmtiEnv*     jvmti_;
   jrawMonitorID raw_monitor_;
   Monitor*      monitor_;
+  Site**        sites_;
 
   int  class_count_;
   bool vm_started_;
 };
 
+// Same hash table size as TCMalloc.
+const uint32_t Heapster::kHashTableSize = 179999;
 Heapster* Heapster::instance = NULL;
 
 // This instantiates a singleton for the above heapster class, which
