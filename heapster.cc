@@ -268,14 +268,17 @@ class Heapster {
           if (error != JVMTI_ERROR_NONE)
             continue;
 
-          // Fill in the entire address space.
-          // TODO: only zero-pad here if we're 64-bit.
+#ifdef __x86_64
           fprintf(file, "0x%016lx %s%s\n", frame, class_name, method_name);
+#else
+          fprintf(file, "0x%08lx %s%s\n", frame, class_name, method_name);
+#endif
         }
       }
     }
 
-    fprintf(file, "---\n--- profile\n");
+    fprintf(file, "---\n");
+    fprintf(file, "--- profile\n");
     fflush(file);
 
     int count = 0;
@@ -306,9 +309,6 @@ class Heapster {
         total_num_allocs += s->num_allocs;
       }
     }
-
-    warnx("dying with %d sites %d allocations and a total of %d bytes\n",
-          count, total_num_allocs, total_num_bytes);
 
     close(fd);
   }
