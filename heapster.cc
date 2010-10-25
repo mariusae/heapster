@@ -130,21 +130,21 @@ class Heapster {
         : next(_next),
           hash(_hash),
           nframes(_nframes),
-          stack(new jlocation[_nframes]),
+          stack(new jmethodID[_nframes]),
           num_allocs(0),
           num_bytes(0) {
       for (int i = 0; i < nframes; ++i)
-        stack[i] = frames[i].location;
+        stack[i] = frames[i].method;
     }
 
     ~Site() {
-      delete stack;
+      delete[] stack;
     }
 
     Site*      next;
     long       hash;
     int        nframes;
-    jlocation* stack;
+    jmethodID* stack;
 
     // Stats.
     int num_allocs;
@@ -238,13 +238,48 @@ class Heapster {
       perror("open");
       return;
     }
+    FILE* file = fdopen(fd, "w");
+
+    // TODO: change "binary" to main class name?
+    fprintf(file, "--- symbol\nbinary=heapster\n");
 
     // Write out symbol information (traverse the sites & resolve
     // method names.)
 
+    for (uint32_t i = 0; i < kHashTableSize; ++i) {
+      for (Site* s = sites_[i]; s != NULL; s = s->next) {
+        for (int i = 0; i < s->nframes; ++i) {
+          uintptr_t frame = reinterpret_cast<uintptr_t>(s->stack[i]);
+          char *method_name;
+          jvmtiError error =
+              jvmti_->GetMethodName(s->stack[i], &method_name, NULL, NULL);
+          if (error != JVMTI_ERROR_NONE)
+            continue;
+
+          jclass declaring_class;
+          error = jvmti_->GetMethodDeclaringClass(
+              s->stack[i], &declaring_class);
+          if (error != JVMTI_ERROR_NONE)
+            continue;
+
+          char* class_name;
+          error = jvmti_->GetClassSignature(
+              declaring_class, &class_name, NULL);
+          if (error != JVMTI_ERROR_NONE)
+            continue;
+
+          // Fill in the entire address space.
+          // TODO: only zero-pad here if we're 64-bit.
+          fprintf(file, "0x%016lx %s%s\n", frame, class_name, method_name);
+        }
+      }
+    }
+
+    fprintf(file, "---\n--- profile\n");
+    fflush(file);
+
     int count = 0;
     int total_num_bytes = 0, total_num_allocs = 0;
-
 
     uintptr_t buf[2 + kMaxStackFrames];
 
@@ -373,7 +408,7 @@ class Heapster {
     // This hash function was adapted from Google perftools.
     long h = 0;
     for (int i = 0; i < nframes; i++) {
-      h += frames[i].location;
+      h += reinterpret_cast<uintptr_t>(frames[i].method);
       h += h << 10;
       h ^= h >> 6;
     }
@@ -386,7 +421,7 @@ class Heapster {
       if (s->hash == h && s->nframes == nframes) {
         int i = 0;
         for (; i < nframes; i++) {
-          if (frames[i].location != s->stack[i]) {
+          if (frames[i].method != s->stack[i]) {
             break;
           }
         }
