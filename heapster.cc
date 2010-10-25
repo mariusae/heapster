@@ -12,6 +12,7 @@
 #include "java_crw_demo.h"
 
 // NB: only works on little-endian machines
+// NB: this is basically a giant race condition right now
 
 using namespace std;
 
@@ -127,12 +128,8 @@ class Heapster {
 
   struct Site {
     Site(Site* _next, long _hash, int _nframes, jvmtiFrameInfo* frames)
-        : next(_next),
-          hash(_hash),
-          nframes(_nframes),
-          stack(new jmethodID[_nframes]),
-          num_allocs(0),
-          num_bytes(0) {
+        : next(_next), hash(_hash), nframes(_nframes),
+          stack(new jmethodID[_nframes]), num_allocs(0), num_bytes(0) {
       for (int i = 0; i < nframes; ++i)
         stack[i] = frames[i].method;
     }
@@ -151,6 +148,8 @@ class Heapster {
     int num_bytes;
   };
 
+  typedef pair<Site*, int> Allocation;
+
   static Heapster* instance;
 
   // * Static JNI hooks.
@@ -166,11 +165,11 @@ class Heapster {
   }
    
   static void JNICALL JVMTI_VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
-    instance->VMDeath(jvmti, env);
+    instance->VMDeath(env);
   }
 
   static void JNICALL JVMTI_ObjectFree(jvmtiEnv* jvmti, jlong tag) {
-    // heapster->ObjectFree(tag);
+    instance->ObjectFree(tag);
   }
 
   static void JNICALL JVMTI_ClassFileLoadHook(
@@ -228,7 +227,7 @@ class Heapster {
     env->SetStaticIntField(klass, field, 1);
   }
 
-  void JNICALL VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
+  void JNICALL VMDeath(JNIEnv* env) {
     char* profile_path = getenv("HEAPPROFILE");
     if (profile_path == NULL)
       return;
@@ -311,6 +310,12 @@ class Heapster {
     }
 
     close(fd);
+  }
+
+  void JNICALL ObjectFree(jlong tag) {
+    Allocation* alloc = reinterpret_cast<Allocation*>(tag);
+    (alloc->first)->num_bytes -= alloc->second;
+    delete alloc;
   }
 
   void JNICALL ClassFileLoadHook(
@@ -441,7 +446,9 @@ class Heapster {
     s->num_allocs++;
     s->num_bytes += size;
 
-// jvmti_->SetTag(o, 123);
+    // Record this allocation (& sampled size) for deallocation.
+    Allocation* alloc = new Allocation(s, size);
+    jvmti_->SetTag(o, reinterpret_cast<jlong>(alloc));
   }
 
  private:
