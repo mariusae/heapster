@@ -1,38 +1,22 @@
-* RUNNING
+# Heapster
 
-java -Xbootclasspath/a:. -agentlib:heapster SimpleThread
+Heapster provides an agent library to do heap profiling for JVM
+processes with output compatible with
+[Google perftools](http://code.google.com/p/google-perftools/). The
+goal of Heapster is to be able to do meaningful (sampled) heap
+profiling in a production setting.
 
+Currently it allows for profiling similar to the TCMalloc library,
+e.g.:
 
+    $ HEAPPROFILE=/tmp/OUT java -Xbootclasspath/a:. -agentlib:heapster Test 
+    $ pprof /tmp/OUT
+    Welcome to pprof!  For help, type 'help'.
+    (pprof) top
+    Total: 2001520 samples
+     2000024  99.9%  99.9%  2000048  99.9% LTest;main
+        1056   0.1% 100.0%     1056   0.1% Ljava/lang/Object;
+         296   0.0% 100.0%      296   0.0% Ljava/lang/String;toCharArray
+         104   0.0% 100.0%      136   0.0% Ljava/lang/Shutdown;
 
-* new_array also(!)
-* sampling: 1-per-N bytes, etc.
-
-* how to deal with garbage collection - can we get gc callbacks for
-tagged objects?
-
-* integrate google perftools
-
-* can we call directly into native code instead of the java
-back-and-forth?
-
-* cover VMObjectAlloc also
-
-* reentrancy
-
-# questions
-
-* can we modify *just* the construct for `Object`? is that possible?
-
-# plan?
-
-
-tag objects of every-n bytes allocated with stack trace.  un-attribute
-those on free.  can be turned on & off arbitrarily.  eventually
-restore original classes (just have to instrument once?).
-
-so we've got 8 bytes.  we keep a maximum # of sites & objects per
-site?
-
-so, spend the first 4 bytes encoding the site, and the second 4 to a
-byte count?  have a continue bit?  so, 31 bits for the size?
-
+This is still work in progress.
