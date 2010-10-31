@@ -235,12 +235,17 @@ class Heapster {
   }
 
   void JNICALL VMDeath(JNIEnv* env) {
-    // Force GC?
     char* profile_path = getenv("HEAPPROFILE");
     if (profile_path == NULL)
       return;
 
-    int fd = open(profile_path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+    jvmtiError error = jvmti_->ForceGarbageCollection();
+    if (error != JVMTI_ERROR_NONE)
+      warnx("Failed to force garbage collection.\n");
+
+    int fd = open(
+        profile_path, O_WRONLY | O_TRUNC | O_CREAT,
+        S_IRUSR | S_IWUSR);
     if (fd < 0) {
       perror("open");
       return;
@@ -406,9 +411,6 @@ class Heapster {
     jvmtiFrameInfo frames[kMaxStackFrames];
     jint nframes;
 
-    // TODO: first, get the size & determine whether we should be
-    // sampling.
-
     // NOTE: much of this code is not re-entrant.  do something about
     // that!  the linked list part can be implemented as a concurrent
     // datastructures, or maybe just using spinlocks [eg. from google
@@ -459,6 +461,8 @@ class Heapster {
     jlong size;
     Assert(jvmti_->GetObjectSize(o, &size),
            "failed to get size of object");
+
+    // warnx("object size is: %d\n", size);
 
     s->num_allocs++;
     s->num_bytes += size;

@@ -1,9 +1,12 @@
 public class SimpleThread {
       native static void check(Thread thr, ClassLoader cl);
       static MyThread t;
+      static char[] hey;
 
       public static void main(String args[]) throws Throwable{
 //          System.loadLibrary("a");
+
+          hey = new char[1000000];
 
 	  t = new MyThread();
           System.out.println("Creating and running 5 threads...");
@@ -32,7 +35,9 @@ class MyThread implements Runnable {
      /* NO-OP */
 		try {
                   for (int i = 0; i < 100000; i++) {
-                    char[] hey = new char[1000];
+                    // System.out.println("allocating..");
+                    char[] hey = new char[i];
+                    // System.out.println("[done]..");
                   }
 
                         "a".getBytes("ASCII");
