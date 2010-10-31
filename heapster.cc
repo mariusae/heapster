@@ -1,3 +1,8 @@
+//
+//
+//
+// Author: marius a. eriksen <marius@monkey.org>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -8,8 +13,10 @@
 #include <jvmti.h>
 #include <string.h>
 #include <fcntl.h>
-#include <map>
 #include "java_crw_demo.h"
+
+#include <set>
+#include <map>
 
 // NB: only works on little-endian machines
 // NB: this is basically a giant race condition right now
@@ -18,7 +25,7 @@ using namespace std;
 
 #define arraysize(a) (sizeof(a)/sizeof(*(a)))
 
-void warnx(const char *fmt, ...) {
+void warnx(const char* fmt, ...) {
   va_list ap;
 
   va_start(ap, fmt);
@@ -27,7 +34,7 @@ void warnx(const char *fmt, ...) {
   va_end(ap);
 }
 
-void errx(int code, const char *fmt, ...) {
+void errx(int code, const char* fmt, ...) {
   va_list ap;
 
   va_start(ap, fmt);
@@ -203,7 +210,7 @@ class Heapster {
     static JNINativeMethod registry[] = {
       { (char*)"_newObject",
         (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
-        (void *)&Heapster::JNI_NewObject }
+        (void*)&Heapster::JNI_NewObject }
     };
 
     klass = env->FindClass(HELPER_CLASS);
@@ -228,6 +235,7 @@ class Heapster {
   }
 
   void JNICALL VMDeath(JNIEnv* env) {
+    // Force GC?
     char* profile_path = getenv("HEAPPROFILE");
     if (profile_path == NULL)
       return;
@@ -244,20 +252,24 @@ class Heapster {
 
     // Write out symbol information (traverse the sites & resolve
     // method names.)
-
+    set<jmethodID> seen_methods;
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
       for (Site* s = sites_[i]; s != NULL; s = s->next) {
         for (int i = 0; i < s->nframes; ++i) {
-          uintptr_t frame = reinterpret_cast<uintptr_t>(s->stack[i]);
-          char *method_name;
+          const jmethodID method = s->stack[i];
+
+          if (seen_methods.find(method) != seen_methods.end())
+            continue;
+
+          uintptr_t frame = reinterpret_cast<uintptr_t>(method);
+          char* method_name;
           jvmtiError error =
-              jvmti_->GetMethodName(s->stack[i], &method_name, NULL, NULL);
+              jvmti_->GetMethodName(method, &method_name, NULL, NULL);
           if (error != JVMTI_ERROR_NONE)
             continue;
 
           jclass declaring_class;
-          error = jvmti_->GetMethodDeclaringClass(
-              s->stack[i], &declaring_class);
+          error = jvmti_->GetMethodDeclaringClass(method, &declaring_class);
           if (error != JVMTI_ERROR_NONE)
             continue;
 
@@ -272,6 +284,8 @@ class Heapster {
 #else
           fprintf(file, "0x%08lx %s%s\n", frame, class_name, method_name);
 #endif
+
+          seen_methods.insert(method);
         }
       }
     }
@@ -300,8 +314,9 @@ class Heapster {
         buf[1] = s->nframes;            // depth
         memcpy(&buf[2], s->stack, s->nframes * sizeof(s->stack[0]));
 
-        AtomicWrite(fd, reinterpret_cast<char*>(buf),
-                    sizeof(buf[0]) * (2 + s->nframes));
+        AtomicWrite(
+            fd, reinterpret_cast<char*>(buf),
+            sizeof(buf[0]) * (2 + s->nframes));
 
         ++count;
         total_num_bytes += s->num_bytes;
@@ -314,12 +329,14 @@ class Heapster {
 
   void JNICALL ObjectFree(jlong tag) {
     Allocation* alloc = reinterpret_cast<Allocation*>(tag);
+    // TODO: remove the site if num_bytes == 0?; keep an alloc object
+    // pool?
     (alloc->first)->num_bytes -= alloc->second;
     delete alloc;
   }
 
   void JNICALL ClassFileLoadHook(
-      jvmtiEnv *jvmti, JNIEnv* env,
+      jvmtiEnv* jvmti, JNIEnv* env,
       jclass class_being_redefined, jobject loader,
       const char* name, jobject protection_domain,
       jint class_data_len, const unsigned char* class_data,
@@ -349,7 +366,7 @@ class Heapster {
     }
 
     // The big magic: rewrite the class with our instrumentation.
-    unsigned char *new_image = NULL;
+    unsigned char* new_image = NULL;
     long new_length = 0L;
 
     java_crw_demo(
@@ -372,8 +389,8 @@ class Heapster {
       // Success. We now need to allocate it with the JVMTI allocator,
       // copy the definition there, and set the corresponding
       // pointers.
-      void *bufp;
-      Assert(jvmti_->Allocate(new_length, (unsigned char **)&bufp),
+      void* bufp;
+      Assert(jvmti_->Allocate(new_length, (unsigned char**)&bufp),
              "failed to allocate buffer for new classfile");
 
       memcpy(bufp, new_image, new_length);
@@ -450,6 +467,8 @@ class Heapster {
     Allocation* alloc = new Allocation(s, size);
     jvmti_->SetTag(o, reinterpret_cast<jlong>(alloc));
   }
+
+  jvmtiEnv* jvmti() { return jvmti_; }
 
  private:
   void Assert(jvmtiError err, string message) {
