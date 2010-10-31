@@ -1,5 +1,5 @@
-//
-//
+// Heapster is a (sampling) heap profiler for the JVM that is
+// output-compatible with google-perftools.
 //
 // Author: marius a. eriksen <marius@monkey.org>
 
@@ -411,13 +411,6 @@ class Heapster {
     jvmtiFrameInfo frames[kMaxStackFrames];
     jint nframes;
 
-    // NOTE: much of this code is not re-entrant.  do something about
-    // that!  the linked list part can be implemented as a concurrent
-    // datastructures, or maybe just using spinlocks [eg. from google
-    // perftools].  incrementing/decrementing allocations can be done
-    // atomically.  it's all commutative anyway.  the list entries
-    // themselves can be CASd in.
-
     // Subtract 2 stack frames to start outside of our own code. TODO:
     // use AsyncGetStackTrace?
     jvmtiError error =
@@ -439,33 +432,38 @@ class Heapster {
     h += h << 3;
     h ^= h >> 11;
 
-    uint32_t bucket = h % kHashTableSize;
-    Site* s = sites_[bucket];
-    for (; s != NULL; s = s->next) {
-      if (s->hash == h && s->nframes == nframes) {
-        int i = 0;
-        for (; i < nframes; i++) {
-          if (frames[i].method != s->stack[i]) {
-            break;
-          }
-        }
-
-        if (i == nframes)
-          break;
-      }
-    }
-
-    if (s == NULL)
-      sites_[bucket] = s = new Site(sites_[bucket], h, nframes, frames);
-
+    // Compute the size (outside the lock.)
     jlong size;
     Assert(jvmti_->GetObjectSize(o, &size),
            "failed to get size of object");
 
-    // warnx("object size is: %d\n", size);
-
-    s->num_allocs++;
-    s->num_bytes += size;
+    uint32_t bucket = h % kHashTableSize;
+    Site* s;
+    // TODO: use a concurrent data structure here.
+    { Lock l(monitor_);
+      s = sites_[bucket];
+      for (; s != NULL; s = s->next) {
+        if (s->hash == h && s->nframes == nframes) {
+          int i = 0;
+          for (; i < nframes; i++) {
+            if (frames[i].method != s->stack[i]) {
+              break;
+            }
+          }
+   
+          if (i == nframes)
+            break;
+        }
+      }
+   
+      if (s == NULL)
+        sites_[bucket] = s = new Site(sites_[bucket], h, nframes, frames);
+   
+      // warnx("object size is: %d\n", size);
+   
+      s->num_allocs++;
+      s->num_bytes += size;
+    }
 
     // Record this allocation (& sampled size) for deallocation.
     Allocation* alloc = new Allocation(s, size);
@@ -539,7 +537,8 @@ Heapster* Heapster::instance = NULL;
 
 // This instantiates a singleton for the above heapster class, which
 // is used in subsequent hooks.
-JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM* jvm, char* options, void* _unused) {
+JNIEXPORT jint JNICALL Agent_OnLoad(
+    JavaVM* jvm, char* options, void* _unused) {
   jvmtiEnv* jvmti = NULL;
 
   if ((jvm->GetEnv((void**)&jvmti, JVMTI_VERSION_1_0)) != JNI_OK ||
