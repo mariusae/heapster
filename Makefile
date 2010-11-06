@@ -12,7 +12,7 @@ DEBUG=-g
 
 all: libheapster.jnilib HeapsterHelper.class
 
-libheapster.jnilib: heapster.o java_crw_demo/java_crw_demo.o
+libheapster.jnilib: heapster.o sampler.o java_crw_demo/java_crw_demo.o
 	g++ $(DEBUG) $(LDFLAGS) -o $@ $^ -lc
 
 %.o: %.cc

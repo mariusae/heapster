@@ -18,6 +18,8 @@
 #include <set>
 #include <map>
 
+#include "sampler.h"
+
 // NB: only works on little-endian machines
 // NB: this is basically a giant race condition right now
 
@@ -408,6 +410,15 @@ class Heapster {
   }
 
   void NewObject(JNIEnv* env, jclass klass, jthread thread, jobject o) {
+    // Compute the size of the allocation & decide whether to sample
+    // it.
+    jlong size;
+    Assert(jvmti_->GetObjectSize(o, &size),
+           "failed to get size of object");
+
+    if (!sampler_.SampleAllocation(size))
+      return;
+
     jvmtiFrameInfo frames[kMaxStackFrames];
     jint nframes;
 
@@ -431,11 +442,6 @@ class Heapster {
     }
     h += h << 3;
     h ^= h >> 11;
-
-    // Compute the size (outside the lock.)
-    jlong size;
-    Assert(jvmti_->GetObjectSize(o, &size),
-           "failed to get size of object");
 
     uint32_t bucket = h % kHashTableSize;
     Site* s;
@@ -484,6 +490,15 @@ class Heapster {
   }
 
   void Setup() {
+    // Initialize the sampler.  If we have multiple samplers (eg. one
+    // per thread), we need to initialize them with different seeds.
+    char* sample_period_env = getenv("HEAPSTER_SAMPLE_PERIOD");
+    int sample_period = 1<<19;  // default: 512 KB
+    if (sample_period_env != NULL)
+      sample_period = strtoll(sample_period_env, NULL, 10);
+
+    sampler_.Init(123/*seed*/, sample_period);
+
     jvmtiCapabilities c; 
     memset(&c, 0, sizeof(c));
     c.can_generate_all_class_hook_events = 1;
@@ -521,10 +536,11 @@ class Heapster {
     memset(sites_, 0, sizeof(Site*) * kHashTableSize);
   }
 
-  jvmtiEnv*     jvmti_;
-  jrawMonitorID raw_monitor_;
-  Monitor*      monitor_;
-  Site**        sites_;
+  jvmtiEnv*         jvmti_;
+  jrawMonitorID     raw_monitor_;
+  Monitor*          monitor_;
+  Site**            sites_;
+  tcmalloc::Sampler sampler_;
 
   int  class_count_;
   bool vm_started_;
@@ -547,6 +563,10 @@ JNIEXPORT jint JNICALL Agent_OnLoad(
     exit(1);
   }
 
+  // Static initialization.
+  tcmalloc::Sampler::InitStatics();
+
+  // Create the actual heapster instance & run with it!
   Heapster::instance = new Heapster(jvmti);
 
   return JNI_OK;
