@@ -19,4 +19,8 @@ e.g.:
          296   0.0% 100.0%      296   0.0% Ljava/lang/String;toCharArray
          104   0.0% 100.0%      136   0.0% Ljava/lang/Shutdown;
 
+By default, Heapster samples every 512 kB, this can be changed with
+the environment variable `HEAPSTER_SAMPLE_PERIOD` (in bytes).
+
 This is still work in progress.
+

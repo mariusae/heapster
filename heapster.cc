@@ -80,21 +80,27 @@ void AtomicWrite(int fd, char* buf, int n) {
 
 class Monitor {
  public:
-  inline explicit Monitor(jvmtiEnv* jvmti, jrawMonitorID monitor)
-      : jvmti_(jvmti), monitor_(monitor)
-  {}
+  inline explicit Monitor(jvmtiEnv* jvmti, const char* descr)
+      : jvmti_(jvmti) {
+    jvmtiError err = jvmti_->CreateRawMonitor(descr, &raw_monitor_);
+    if (err != JVMTI_ERROR_NONE) {
+      char* strerr;
+      jvmti_->GetErrorName(err, &strerr);
+      errx(3, "jvmti error while creating monitor: %s\n", strerr);
+    }
+  }
         
   jvmtiEnv* jvmti() {
     return jvmti_;
   }
 
   jrawMonitorID monitor() {
-    return monitor_;
+    return raw_monitor_;
   }
 
  private:
   jvmtiEnv* jvmti_;
-  jrawMonitorID monitor_;
+  jrawMonitorID raw_monitor_;
 };
 
 class Lock {
@@ -196,7 +202,7 @@ class Heapster {
   // * Instance methods.
 
   Heapster(jvmtiEnv* jvmti)
-      : jvmti_(jvmti), raw_monitor_(NULL), monitor_(NULL),
+      : jvmti_(jvmti), monitor_(NULL),
         class_count_(0), vm_started_(false) {
     Setup();
   }
@@ -416,8 +422,10 @@ class Heapster {
     Assert(jvmti_->GetObjectSize(o, &size),
            "failed to get size of object");
 
-    if (!sampler_.SampleAllocation(size))
-      return;
+    { Lock l(sampler_monitor_);
+      if (!sampler_.SampleAllocation(size))
+        return;
+    }
 
     jvmtiFrameInfo frames[kMaxStackFrames];
     jint nframes;
@@ -526,10 +534,8 @@ class Heapster {
              "failed to set event notification mode");
     }
 
-    Assert(jvmti_->CreateRawMonitor("heapster state", &raw_monitor_),
-           "failed to create heapster monitor");
-
-    monitor_ = new Monitor(jvmti_, raw_monitor_);
+    monitor_ = new Monitor(jvmti_, "heapster state");
+    sampler_monitor_ = new Monitor(jvmti_, "sampler state");
 
     // Set up allocation site table.
     sites_ = new Site*[kHashTableSize];
@@ -537,8 +543,8 @@ class Heapster {
   }
 
   jvmtiEnv*         jvmti_;
-  jrawMonitorID     raw_monitor_;
   Monitor*          monitor_;
+  Monitor*          sampler_monitor_;
   Site**            sites_;
   tcmalloc::Sampler sampler_;
 
