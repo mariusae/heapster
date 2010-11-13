@@ -10,9 +10,9 @@ LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
         -static-libgcc -mimpure-text -shared
 DEBUG=-g
 
-all: libheapster.jnilib HeapsterHelper.class
+all: libheapster.jnilib Heapster.class
 
-libheapster.jnilib: heapster.o sampler.o java_crw_demo/java_crw_demo.o
+libheapster.jnilib: heapster.o sampler.o util.o java_crw_demo/java_crw_demo.o
 	g++ $(DEBUG) $(LDFLAGS) -o $@ $^ -lc
 
 %.o: %.cc

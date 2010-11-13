@@ -19,9 +19,14 @@
 #include <map>
 
 #include "sampler.h"
+#include "util.h"
 
 // NB: only works on little-endian machines
-// NB: this is basically a giant race condition right now
+
+// TODO
+//   > modify sample rate at runtime
+//   > fix memory leaks
+//   > ability to clear profile
 
 using namespace std;
 
@@ -133,7 +138,7 @@ class Lock {
   jrawMonitorID monitor_;
 };
 
-#define HELPER_CLASS "HeapsterHelper"
+#define HELPER_CLASS "Heapster"
 #define HELPER_FIELD_ISREADY "isReady"
 
 class Heapster {
@@ -168,10 +173,21 @@ class Heapster {
   static Heapster* instance;
 
   // * Static JNI hooks.
-  static void JNI_NewObject(
+  static JNIEXPORT void JNICALL JNI_NewObject(
       JNIEnv* env, jclass klass,
       jthread thread, jobject o) {
     instance->NewObject(env, klass, thread, o);
+  }
+
+  static JNIEXPORT jbyteArray JNICALL JNI_DumpProfile(
+      JNIEnv* env, jclass klass) {
+    const string profile = instance->DumpProfile(env, klass);
+    jbyteArray buf = env->NewByteArray(profile.size());
+    // TODO: check error here?
+    env->SetByteArrayRegion(
+        buf, 0, profile.size(), (jbyte*)profile.data());
+
+    return buf;
   }
 
   // * Static JVMTI hooks
@@ -193,6 +209,11 @@ class Heapster {
       const char* name, jobject protection_domain,
       jint class_data_len, const unsigned char* class_data,
       jint* new_class_data_len, unsigned char** new_class_data) {
+    // Currently, we always instrument classes (but profiling is
+    // optional, and won't leave bytecode unecessarily), but in the
+    // future we may consider dynamic BCI, as per:
+    //
+    //   http://download.oracle.com/javase/6/docs/platform/jvmti/jvmti.html#bci
     instance->ClassFileLoadHook(
         jvmti, env, class_being_redefined, loader, name,
         protection_domain, class_data_len, class_data,
@@ -218,7 +239,10 @@ class Heapster {
     static JNINativeMethod registry[] = {
       { (char*)"_newObject",
         (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
-        (void*)&Heapster::JNI_NewObject }
+        (void*)&Heapster::JNI_NewObject },
+      { (char*)"_dumpProfile",
+        (char*)"()[B",
+        (void*)&Heapster::JNI_DumpProfile }
     };
 
     klass = env->FindClass(HELPER_CLASS);
@@ -243,101 +267,7 @@ class Heapster {
   }
 
   void JNICALL VMDeath(JNIEnv* env) {
-    char* profile_path = getenv("HEAPPROFILE");
-    if (profile_path == NULL)
-      return;
-
-    jvmtiError error = jvmti_->ForceGarbageCollection();
-    if (error != JVMTI_ERROR_NONE)
-      warnx("Failed to force garbage collection.\n");
-
-    int fd = open(
-        profile_path, O_WRONLY | O_TRUNC | O_CREAT,
-        S_IRUSR | S_IWUSR);
-    if (fd < 0) {
-      perror("open");
-      return;
-    }
-    FILE* file = fdopen(fd, "w");
-
-    // TODO: change "binary" to main class name?
-    fprintf(file, "--- symbol\nbinary=heapster\n");
-
-    // Write out symbol information (traverse the sites & resolve
-    // method names.)
-    set<jmethodID> seen_methods;
-    for (uint32_t i = 0; i < kHashTableSize; ++i) {
-      for (Site* s = sites_[i]; s != NULL; s = s->next) {
-        for (int i = 0; i < s->nframes; ++i) {
-          const jmethodID method = s->stack[i];
-
-          if (seen_methods.find(method) != seen_methods.end())
-            continue;
-
-          uintptr_t frame = reinterpret_cast<uintptr_t>(method);
-          char* method_name;
-          jvmtiError error =
-              jvmti_->GetMethodName(method, &method_name, NULL, NULL);
-          if (error != JVMTI_ERROR_NONE)
-            continue;
-
-          jclass declaring_class;
-          error = jvmti_->GetMethodDeclaringClass(method, &declaring_class);
-          if (error != JVMTI_ERROR_NONE)
-            continue;
-
-          char* class_name;
-          error = jvmti_->GetClassSignature(
-              declaring_class, &class_name, NULL);
-          if (error != JVMTI_ERROR_NONE)
-            continue;
-
-#ifdef __x86_64
-          fprintf(file, "0x%016lx %s%s\n", frame, class_name, method_name);
-#else
-          fprintf(file, "0x%08lx %s%s\n", frame, class_name, method_name);
-#endif
-
-          seen_methods.insert(method);
-        }
-      }
-    }
-
-    fprintf(file, "---\n");
-    fprintf(file, "--- profile\n");
-    fflush(file);
-
-    int count = 0;
-    int total_num_bytes = 0, total_num_allocs = 0;
-
-    uintptr_t buf[2 + kMaxStackFrames];
-
-    // Write out the header.
-    buf[0] = 0;
-    buf[1] = 3;
-    buf[2] = 0;
-    buf[3] = 1;
-    buf[4] = 0;
-
-    AtomicWrite(fd, reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
-
-    for (uint32_t i = 0; i < kHashTableSize; ++i) {
-      for (Site* s = sites_[i]; s != NULL; s = s->next) {
-        buf[0] = s->num_bytes;          // nsamples
-        buf[1] = s->nframes;            // depth
-        memcpy(&buf[2], s->stack, s->nframes * sizeof(s->stack[0]));
-
-        AtomicWrite(
-            fd, reinterpret_cast<char*>(buf),
-            sizeof(buf[0]) * (2 + s->nframes));
-
-        ++count;
-        total_num_bytes += s->num_bytes;
-        total_num_allocs += s->num_allocs;
-      }
-    }
-
-    close(fd);
+    /* nothing here */
   }
 
   void JNICALL ObjectFree(jlong tag) {
@@ -482,6 +412,100 @@ class Heapster {
     // Record this allocation (& sampled size) for deallocation.
     Allocation* alloc = new Allocation(s, size);
     jvmti_->SetTag(o, reinterpret_cast<jlong>(alloc));
+  }
+
+  const string DumpProfile(JNIEnv* env, jclass klass) {
+    string prof = "";
+
+    jvmtiError error = jvmti_->ForceGarbageCollection();
+    if (error != JVMTI_ERROR_NONE)
+      warnx("Failed to force garbage collection.\n");
+
+    // TODO: change "binary" to main class name?
+    prof += "--- symbol\nbinary=heapster\n";
+
+    // Write out symbol information (traverse the sites & resolve
+    // method names.)
+    set<jmethodID> seen_methods;
+    for (uint32_t i = 0; i < kHashTableSize; ++i) {
+      for (Site* s = sites_[i]; s != NULL; s = s->next) {
+        for (int i = 0; i < s->nframes; ++i) {
+          const jmethodID method = s->stack[i];
+
+          if (seen_methods.find(method) != seen_methods.end())
+            continue;
+
+          uintptr_t frame = reinterpret_cast<uintptr_t>(method);
+          char* method_name;
+          jvmtiError error =
+              jvmti_->GetMethodName(method, &method_name, NULL, NULL);
+          if (error != JVMTI_ERROR_NONE)
+            continue;
+
+          jclass declaring_class;
+          error = jvmti_->GetMethodDeclaringClass(method, &declaring_class);
+          if (error != JVMTI_ERROR_NONE)
+            continue;
+
+          char* class_name;
+          error = jvmti_->GetClassSignature(
+              declaring_class, &class_name, NULL);
+          if (error != JVMTI_ERROR_NONE)
+            continue;
+
+#ifdef __x86_64
+          prof += StringPrintf(
+              "0x%016lx %s%s\n", frame, class_name, method_name);
+#else
+          prof += StringPrintf(
+              "0x%08lx %s%s\n", frame, class_name, method_name);
+#endif
+
+          seen_methods.insert(method);
+        }
+      }
+    }
+
+    prof += "---\n";
+    prof += "--- profile\n";
+
+    int count = 0;
+    int total_num_bytes = 0, total_num_allocs = 0;
+
+    uintptr_t buf[2 + kMaxStackFrames];
+
+    // Write out the header.
+    buf[0] = 0;
+    buf[1] = 3;
+    buf[2] = 0;
+    buf[3] = 1;
+    buf[4] = 0;
+
+    prof.append(reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
+    
+    // AtomicWrite(fd, reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
+
+    for (uint32_t i = 0; i < kHashTableSize; ++i) {
+      for (Site* s = sites_[i]; s != NULL; s = s->next) {
+        buf[0] = s->num_bytes;          // nsamples
+        buf[1] = s->nframes;            // depth
+        memcpy(&buf[2], s->stack, s->nframes * sizeof(s->stack[0]));
+
+        // prof += ...
+        
+        prof.append(reinterpret_cast<char*>(buf),
+                    sizeof(buf[0]) * (2 + s->nframes));
+        // AtomicWrite(
+        //     fd, reinterpret_cast<char*>(buf),
+        //     sizeof(buf[0]) * (2 + s->nframes));
+
+        ++count;
+        total_num_bytes += s->num_bytes;
+        total_num_allocs += s->num_allocs;
+      }
+    }
+
+    return prof;
   }
 
   jvmtiEnv* jvmti() { return jvmti_; }
