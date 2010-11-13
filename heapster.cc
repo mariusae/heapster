@@ -27,6 +27,7 @@
 //   > modify sample rate at runtime
 //   > fix memory leaks
 //   > ability to clear profile
+//   > support google "GetHeapSample" output / symbol lookup
 
 using namespace std;
 
