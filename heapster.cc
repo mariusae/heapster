@@ -28,6 +28,7 @@
 //   > fix memory leaks
 //   > ability to clear profile
 //   > support google "GetHeapSample" output / symbol lookup
+//       see: google-perftools/doc/pprof_remote_servers.html
 
 using namespace std;
 
@@ -50,38 +51,6 @@ void errx(int code, const char* fmt, ...) {
   fflush(stderr);
   va_end(ap);
   exit(code);
-}
-
-// Bogarted from various OpenBSD.
-size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
-                int fd, void* _s, size_t n) {
-  char* s = reinterpret_cast<char*>(_s);
-  size_t pos = 0;
-  ssize_t res;
-  
-  while (n > pos) {
-    res = (f) (fd, s + pos, n - pos);
-    switch (res) {
-      case -1:
-        if (errno == EINTR || errno == EAGAIN)
-          continue;
-        return 0;
-      case 0:
-        errno = EPIPE;
-        return pos;
-      default:
-        pos += (u_int)res;
-    }
-  }
-
-  return pos;
-}
-
-void AtomicWrite(int fd, char* buf, int n) {
-  if (AtomicIO(write, fd, (void*)buf, n) != (size_t)n) {
-    perror("AtomicWrite");
-    exit(1);
-  }
 }
 
 class Monitor {
@@ -484,21 +453,14 @@ class Heapster {
 
     prof.append(reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
     
-    // AtomicWrite(fd, reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
-
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
       for (Site* s = sites_[i]; s != NULL; s = s->next) {
         buf[0] = s->num_bytes;          // nsamples
         buf[1] = s->nframes;            // depth
         memcpy(&buf[2], s->stack, s->nframes * sizeof(s->stack[0]));
 
-        // prof += ...
-        
         prof.append(reinterpret_cast<char*>(buf),
                     sizeof(buf[0]) * (2 + s->nframes));
-        // AtomicWrite(
-        //     fd, reinterpret_cast<char*>(buf),
-        //     sizeof(buf[0]) * (2 + s->nframes));
 
         ++count;
         total_num_bytes += s->num_bytes;
