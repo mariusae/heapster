@@ -160,6 +160,10 @@ class Heapster {
     return buf;
   }
 
+  static JNIEXPORT void JNICALL JNI_ClearProfile(JNIEnv* env, jclass klass) {
+    instance->ClearProfile();
+  }
+
   // * Static JVMTI hooks
   static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
@@ -194,7 +198,8 @@ class Heapster {
 
   Heapster(jvmtiEnv* jvmti)
       : jvmti_(jvmti), monitor_(NULL),
-        class_count_(0), vm_started_(false) {
+        sites_(NULL), class_count_(0),
+        vm_started_(false) {
     Setup();
   }
 
@@ -212,7 +217,10 @@ class Heapster {
         (void*)&Heapster::JNI_NewObject },
       { (char*)"_dumpProfile",
         (char*)"()[B",
-        (void*)&Heapster::JNI_DumpProfile }
+        (void*)&Heapster::JNI_DumpProfile },
+      { (char*)"_clearProfile",
+        (char*)"()V",
+        (void*)&Heapster::JNI_ClearProfile }
     };
 
     klass = env->FindClass(HELPER_CLASS);
@@ -241,10 +249,19 @@ class Heapster {
   }
 
   void JNICALL ObjectFree(jlong tag) {
+    // TODO: can this happen concurrently?  use atomic decrements?
+    // monitor per site?
+
     Allocation* alloc = reinterpret_cast<Allocation*>(tag);
     // TODO: remove the site if num_bytes == 0?; keep an alloc object
     // pool?
-    (alloc->first)->num_bytes -= alloc->second;
+    Site* s = alloc->first;
+    int nbytes = alloc->second;
+
+    s->num_bytes -= nbytes;
+    if (s->num_bytes == 0)
+      delete s;
+
     delete alloc;
   }
 
@@ -471,6 +488,15 @@ class Heapster {
     return prof;
   }
 
+  void ClearProfile() {
+    // The individual sites will be deallocated as they become
+    // empty. Simply clearing the hashtable loses our reference to it
+    // & so we start anew.
+    delete[] sites_;
+    sites_ = new Site*[kHashTableSize];
+    memset(sites_, 0, sizeof(Site*) * kHashTableSize);
+  }
+
   jvmtiEnv* jvmti() { return jvmti_; }
 
  private:
@@ -525,8 +551,7 @@ class Heapster {
     sampler_monitor_ = new Monitor(jvmti_, "sampler state");
 
     // Set up allocation site table.
-    sites_ = new Site*[kHashTableSize];
-    memset(sites_, 0, sizeof(Site*) * kHashTableSize);
+    ClearProfile();
   }
 
   jvmtiEnv*         jvmti_;
