@@ -25,11 +25,11 @@ public class Heapster {
     isProfiling = false;
   }
 
-  public static void clear() {
+  public static void clearProfile() {
     _clearProfile();
   }
 
-  public static void setSamplingPeriod(int period) {
+  public static void setSamplingPeriod(java.lang.Integer period) {
     _setSamplingPeriod(period);
   }
 
