@@ -12,6 +12,7 @@ public class Heapster {
   private static native byte[] _dumpProfile();
   private static native void _newObject(Object thread, Object o);
   private static native void _clearProfile();
+  private static native void _setSamplingPeriod(int period);
 
   public static int isReady = 0;
   public static volatile boolean isProfiling = false;
@@ -26,6 +27,10 @@ public class Heapster {
 
   public static void clear() {
     _clearProfile();
+  }
+
+  public static void setSamplingPeriod(int period) {
+    _setSamplingPeriod(period);
   }
 
   public static void newObject(Object obj) {

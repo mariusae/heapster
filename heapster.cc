@@ -164,6 +164,11 @@ class Heapster {
     instance->ClearProfile();
   }
 
+  static JNIEXPORT void JNICALL JNI_SetSamplingPeriod(
+      JNIEnv* env, jclass klass, int period) {
+    instance->SetSamplingPeriod(period);
+  }
+
   // * Static JVMTI hooks
   static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
@@ -220,7 +225,10 @@ class Heapster {
         (void*)&Heapster::JNI_DumpProfile },
       { (char*)"_clearProfile",
         (char*)"()V",
-        (void*)&Heapster::JNI_ClearProfile }
+        (void*)&Heapster::JNI_ClearProfile },
+      { (char*)"_setSamplingPeriod",
+        (char*)"(I)V",
+        (void*)&Heapster::JNI_SetSamplingPeriod }
     };
 
     klass = env->FindClass(HELPER_CLASS);
@@ -497,6 +505,10 @@ class Heapster {
     memset(sites_, 0, sizeof(Site*) * kHashTableSize);
   }
 
+  void SetSamplingPeriod(int period) {
+    sampler_.Init(123, period);
+  }
+
   jvmtiEnv* jvmti() { return jvmti_; }
 
  private:
@@ -518,7 +530,7 @@ class Heapster {
     if (sample_period_env != NULL)
       sample_period = strtoll(sample_period_env, NULL, 10);
 
-    sampler_.Init(123/*seed*/, sample_period);
+    SetSamplingPeriod(sample_period);
 
     jvmtiCapabilities c; 
     memset(&c, 0, sizeof(c));
