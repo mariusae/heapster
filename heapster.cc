@@ -24,11 +24,7 @@
 // NB: only works on little-endian machines
 
 // TODO
-//   > modify sample rate at runtime
 //   > fix memory leaks
-//   > ability to clear profile
-//   > support google "GetHeapSample" output / symbol lookup
-//       see: google-perftools/doc/pprof_remote_servers.html
 
 using namespace std;
 
@@ -117,8 +113,10 @@ class Heapster {
   static const uint32_t kMaxStackFrames;
 
   struct Site {
-    Site(Site* _next, long _hash, int _nframes, jvmtiFrameInfo* frames)
-        : next(_next), hash(_hash), nframes(_nframes),
+    Site(Site* _next, Site** _head,
+         long _hash, int _nframes,
+         jvmtiFrameInfo* frames)
+        : next(_next), head(_head), hash(_hash), nframes(_nframes),
           stack(new jmethodID[_nframes]), num_allocs(0), num_bytes(0) {
       for (int i = 0; i < nframes; ++i)
         stack[i] = frames[i].method;
@@ -129,6 +127,7 @@ class Heapster {
     }
 
     Site*      next;
+    Site**     head;
     long       hash;
     int        nframes;
     jmethodID* stack;
@@ -257,18 +256,26 @@ class Heapster {
   }
 
   void JNICALL ObjectFree(jlong tag) {
-    // TODO: can this happen concurrently?  use atomic decrements?
-    // monitor per site?
+    Lock l(monitor_);
 
     Allocation* alloc = reinterpret_cast<Allocation*>(tag);
-    // TODO: remove the site if num_bytes == 0?; keep an alloc object
-    // pool?
     Site* s = alloc->first;
     int nbytes = alloc->second;
 
     s->num_bytes -= nbytes;
-    if (s->num_bytes == 0)
+    if (s->num_bytes == 0) {
+      if (*s->head == s) {
+        *s->head = s->next;
+      } else {
+        Site* previous = *s->head;
+        for (; previous->next != s; previous = previous->next)
+          ;
+        previous->next = s->next;
+      }
+
       delete s;
+    }
+
 
     delete alloc;
   }
@@ -378,7 +385,8 @@ class Heapster {
 
     uint32_t bucket = h % kHashTableSize;
     Site* s;
-    // TODO: use a concurrent data structure here.
+    // TODO: use a concurrent data structure here, or something more
+    // fine grained.
     { Lock l(monitor_);
       s = sites_[bucket];
       for (; s != NULL; s = s->next) {
@@ -394,12 +402,13 @@ class Heapster {
             break;
         }
       }
-   
-      if (s == NULL)
-        sites_[bucket] = s = new Site(sites_[bucket], h, nframes, frames);
-   
-      // warnx("object size is: %d\n", size);
-   
+
+      if (s == NULL) {
+        sites_[bucket] = s = new Site(
+            sites_[bucket], &sites_[bucket],
+            h, nframes, frames);
+      }
+
       s->num_allocs++;
       s->num_bytes += size;
     }
@@ -410,6 +419,8 @@ class Heapster {
   }
 
   const string DumpProfile(JNIEnv* env, jclass klass) {
+    Lock l(monitor_);
+
     string prof = "";
 
     jvmtiError error = jvmti_->ForceGarbageCollection();
@@ -497,6 +508,7 @@ class Heapster {
   }
 
   void ClearProfile() {
+    Lock l(monitor_);
     // The individual sites will be deallocated as they become
     // empty. Simply clearing the hashtable loses our reference to it
     // & so we start anew.
@@ -506,7 +518,8 @@ class Heapster {
   }
 
   void SetSamplingPeriod(int period) {
-    sampler_.Init(123, period);
+    Lock l(sampler_monitor_);
+    sampler_.Init(0, period);
   }
 
   jvmtiEnv* jvmti() { return jvmti_; }
@@ -529,8 +542,6 @@ class Heapster {
     int sample_period = 1<<19;  // default: 512 KB
     if (sample_period_env != NULL)
       sample_period = strtoll(sample_period_env, NULL, 10);
-
-    SetSamplingPeriod(sample_period);
 
     jvmtiCapabilities c; 
     memset(&c, 0, sizeof(c));
@@ -561,6 +572,8 @@ class Heapster {
 
     monitor_ = new Monitor(jvmti_, "heapster state");
     sampler_monitor_ = new Monitor(jvmti_, "sampler state");
+
+    SetSamplingPeriod(sample_period);
 
     // Set up allocation site table.
     ClearProfile();
