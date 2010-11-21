@@ -9,12 +9,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 
 public class Heapster {
-  private static native byte[] _dumpProfile();
+  private static native byte[] _dumpProfile(boolean forceGC);
   private static native void _newObject(Object thread, Object o);
   private static native void _clearProfile();
   private static native void _setSamplingPeriod(int period);
 
-  public static int isReady = 0;
+  public static volatile int isReady = 0;
   public static volatile boolean isProfiling = false;
 
   public static void start() {
@@ -45,14 +45,16 @@ public class Heapster {
       _newObject(thread, obj);
   }
 
-  public static byte[] dumpProfile() {
-    return _dumpProfile();
+  public static byte[] dumpProfile(java.lang.Boolean forceGC) {
+    return _dumpProfile(forceGC);
   }
 
-  public static void dumpProfileToFile(String path) throws IOException {
+  public static void dumpProfileToFile(
+      String path, boolean forceGC)
+      throws IOException {
     File file = new File(path);
     FileOutputStream stream = new FileOutputStream(file);
-    stream.write(dumpProfile());
+    stream.write(dumpProfile(forceGC));
     stream.close();
   }
 

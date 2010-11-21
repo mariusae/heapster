@@ -113,11 +113,10 @@ class Heapster {
   static const uint32_t kMaxStackFrames;
 
   struct Site {
-    Site(Site* _next, Site** _head,
-         long _hash, int _nframes,
-         jvmtiFrameInfo* frames)
-        : next(_next), head(_head), hash(_hash), nframes(_nframes),
-          stack(new jmethodID[_nframes]), num_allocs(0), num_bytes(0) {
+    Site(Site* _next , long _hash, int _nframes, jvmtiFrameInfo* frames)
+        : next(_next), hash(_hash), active(true),
+          nframes(_nframes), stack(new jmethodID[_nframes]),
+          num_allocs(0), num_bytes(0) {
       for (int i = 0; i < nframes; ++i)
         stack[i] = frames[i].method;
     }
@@ -127,8 +126,9 @@ class Heapster {
     }
 
     Site*      next;
-    Site**     head;
     long       hash;
+    bool       active;
+
     int        nframes;
     jmethodID* stack;
 
@@ -149,8 +149,8 @@ class Heapster {
   }
 
   static JNIEXPORT jbyteArray JNICALL JNI_DumpProfile(
-      JNIEnv* env, jclass klass) {
-    const string profile = instance->DumpProfile(env, klass);
+      JNIEnv* env, jclass klass, jboolean force_gc) {
+    const string profile = instance->DumpProfile(env, klass, force_gc);
     jbyteArray buf = env->NewByteArray(profile.size());
     // TODO: check error here?
     env->SetByteArrayRegion(
@@ -220,7 +220,7 @@ class Heapster {
         (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
         (void*)&Heapster::JNI_NewObject },
       { (char*)"_dumpProfile",
-        (char*)"()[B",
+        (char*)"(Z)[B",
         (void*)&Heapster::JNI_DumpProfile },
       { (char*)"_clearProfile",
         (char*)"()V",
@@ -263,19 +263,8 @@ class Heapster {
     int nbytes = alloc->second;
 
     s->num_bytes -= nbytes;
-    if (s->num_bytes == 0) {
-      if (*s->head == s) {
-        *s->head = s->next;
-      } else {
-        Site* previous = *s->head;
-        for (; previous->next != s; previous = previous->next)
-          ;
-        previous->next = s->next;
-      }
-
+    if (!s->active && s->num_bytes == 0)
       delete s;
-    }
-
 
     delete alloc;
   }
@@ -404,9 +393,8 @@ class Heapster {
       }
 
       if (s == NULL) {
-        sites_[bucket] = s = new Site(
-            sites_[bucket], &sites_[bucket],
-            h, nframes, frames);
+        sites_[bucket] = s =
+          new Site(sites_[bucket], h, nframes, frames);
       }
 
       s->num_allocs++;
@@ -418,14 +406,15 @@ class Heapster {
     jvmti_->SetTag(o, reinterpret_cast<jlong>(alloc));
   }
 
-  const string DumpProfile(JNIEnv* env, jclass klass) {
+  const string DumpProfile(JNIEnv* env, jclass klass, bool force_gc) {
+    if (force_gc) {
+      jvmtiError error = jvmti_->ForceGarbageCollection();
+      if (error != JVMTI_ERROR_NONE)
+        warnx("Failed to force garbage collection.\n");
+    }
+
     Lock l(monitor_);
-
     string prof = "";
-
-    jvmtiError error = jvmti_->ForceGarbageCollection();
-    if (error != JVMTI_ERROR_NONE)
-      warnx("Failed to force garbage collection.\n");
 
     // TODO: change "binary" to main class name?
     prof += "--- symbol\nbinary=heapster\n";
@@ -435,6 +424,10 @@ class Heapster {
     set<jmethodID> seen_methods;
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
       for (Site* s = sites_[i]; s != NULL; s = s->next) {
+        // Don't print for empty sites.
+        if (s->num_bytes <= 0)
+          continue;
+
         for (int i = 0; i < s->nframes; ++i) {
           const jmethodID method = s->stack[i];
 
@@ -509,10 +502,31 @@ class Heapster {
 
   void ClearProfile() {
     Lock l(monitor_);
-    // The individual sites will be deallocated as they become
-    // empty. Simply clearing the hashtable loses our reference to it
-    // & so we start anew.
+    // The individual sites will be deallocated as they become empty
+    // when they are marked dead. We also have to collect the
+    // currently empty sites ourselves. But their linked list will
+    // never be used (the ``sites_'') reference is lost & so this is
+    // safe.
+
+    for (uint32_t i = 0; i < kHashTableSize; ++i) {
+      Site* s = sites_[i];
+      while (s != NULL) {
+        Site* next = s->next;
+
+        if (s->num_bytes == 0)
+          delete s;
+        else
+          s->active = false;
+
+        s = next;
+      }
+    }
+
     delete[] sites_;
+    AllocProfile();
+  }
+
+  void AllocProfile() {
     sites_ = new Site*[kHashTableSize];
     memset(sites_, 0, sizeof(Site*) * kHashTableSize);
   }
@@ -576,7 +590,7 @@ class Heapster {
     SetSamplingPeriod(sample_period);
 
     // Set up allocation site table.
-    ClearProfile();
+    AllocProfile();
   }
 
   jvmtiEnv*         jvmti_;
