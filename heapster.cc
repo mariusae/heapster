@@ -49,6 +49,40 @@ void errx(int code, const char* fmt, ...) {
   exit(code);
 }
 
+// Bogarted from various OpenBSD.
+size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
+                int fd, const void* _s, size_t n) {
+  const char* s = reinterpret_cast<const char*>(_s);
+  size_t pos = 0;
+  ssize_t res;
+		
+  while (n > pos) {
+    res = (f) (fd, s + pos, n - pos);
+    switch (res) {
+      case -1:
+        if (errno == EINTR || errno == EAGAIN)
+          continue;
+        return 0;
+		
+      case 0:
+        errno = EPIPE;
+        return pos;
+		
+      default:
+        pos += (u_int)res;
+    }
+  }
+		
+  return pos;
+}
+		
+void AtomicWrite(int fd, const char* buf, int n) {
+ if (AtomicIO(write, fd, (const void*)buf, n) != (size_t)n) {
+   perror("AtomicWrite");
+   exit(1);
+ }
+}
+
 class Monitor {
  public:
   inline explicit Monitor(jvmtiEnv* jvmti, const char* descr)
@@ -106,6 +140,7 @@ class Lock {
 
 #define HELPER_CLASS "Heapster"
 #define HELPER_FIELD_ISREADY "isReady"
+#define HELPER_FIELD_ISPROFILING "isProfiling"
 
 class Heapster {
  public:
@@ -150,7 +185,7 @@ class Heapster {
 
   static JNIEXPORT jbyteArray JNICALL JNI_DumpProfile(
       JNIEnv* env, jclass klass, jboolean force_gc) {
-    const string profile = instance->DumpProfile(env, klass, force_gc);
+    const string profile = instance->DumpProfile(force_gc);
     jbyteArray buf = env->NewByteArray(profile.size());
     // TODO: check error here?
     env->SetByteArrayRegion(
@@ -244,15 +279,43 @@ class Heapster {
     }
 
     // Set the static field to hint the helper.
-    jfieldID field = env->GetStaticFieldID(klass, HELPER_FIELD_ISREADY, "I");
-    if (field == NULL)
+    jfieldID is_ready_field = env->GetStaticFieldID(klass, HELPER_FIELD_ISREADY, "I");
+    if (is_ready_field == NULL)
       errx(3, "Failed to get %s field\n", HELPER_FIELD_ISREADY);
+    env->SetStaticIntField(klass, is_ready_field, 1);
 
-    env->SetStaticIntField(klass, field, 1);
+    // If we ask for a static profile, make sure we turn profiling on
+    // from the beginning.
+    if (getenv("HEAPSTER_PROFILE") != NULL) {
+      jfieldID is_profiling_field = env->GetStaticFieldID(
+          klass, HELPER_FIELD_ISPROFILING, "Z");
+      if (is_profiling_field == NULL)
+        errx(3, "Failed to get %s field\n", HELPER_FIELD_ISPROFILING);
+
+      env->SetStaticBooleanField(klass, is_profiling_field, (jboolean)1);
+    }
   }
 
   void JNICALL VMDeath(JNIEnv* env) {
-    /* nothing here */
+    char* path = getenv("HEAPSTER_PROFILE");
+    if (path == NULL)
+      return;
+
+    string profile = DumpProfile(false/*force GC*/);
+
+    int fd = open(
+        path, O_WRONLY | O_TRUNC | O_CREAT,
+        S_IRUSR | S_IWUSR);
+
+    if (fd < 0) {
+      perror("open");
+      return;
+    }
+
+    AtomicWrite(fd, reinterpret_cast<const char*>(profile.data()), profile.size());
+    warnx("Profile written to %s", path);
+
+    close(fd);
   }
 
   void JNICALL ObjectFree(jlong tag) {
@@ -406,7 +469,7 @@ class Heapster {
     jvmti_->SetTag(o, reinterpret_cast<jlong>(alloc));
   }
 
-  const string DumpProfile(JNIEnv* env, jclass klass, bool force_gc) {
+  const string DumpProfile(bool force_gc) {
     if (force_gc) {
       jvmtiError error = jvmti_->ForceGarbageCollection();
       if (error != JVMTI_ERROR_NONE)
