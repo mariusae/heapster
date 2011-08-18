@@ -1,6 +1,7 @@
 // Lifted from google-perftools.
 
 #include <string>
+#include <stdarg.h>
 
 using namespace std;
 
