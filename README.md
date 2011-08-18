@@ -26,8 +26,7 @@ This is still work in progress.
 
 # Ostrich integration
 
-If you use [Ostrich](https://github.com/twitter/ostrich) (with the
-scala2.8 branch), and run your program with heapster, you can generate
+If you use [Ostrich](https://github.com/twitter/ostrich), and run your program with heapster, you can generate
 runtime heap profiles like so:
 
     $ curl 'localhost:9990/pprof/heap?pause=10&sample_period=1024' > /tmp/prof
