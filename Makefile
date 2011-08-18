@@ -1,7 +1,15 @@
 CC=gcc
-JAVA_HOME=/System/Library/Frameworks/JavaVM.framework/Versions/1.6.0/Home
-#JAVA_HEADERS=/System/Library/Frameworks/JavaVM.framework/Versions/Current/Headers
-JAVA_HEADERS=/Developer/SDKs/MacOSX10.6.sdk/System/Library/Frameworks/JavaVM.framework/Versions/1.6.0/Headers
+OS=$(shell uname -s | tr '[A-Z]' '[a-z]')
+
+ifeq ("$(OS)", "darwin")
+JAVE_HOME=$(shell /usr/libexec/java_home)
+JAVA_HEADERS=/Developer/SDKs/MacOSX10.6.sdk/System/Library/Frameworks/JavaVM.framework/Versions/1.6.0/Headers/
+endif
+
+ifeq ("$(OS)", "linux")
+JAVA_HOME=/usr/java/default/
+JAVA_HEADERS=$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux
+endif
 
 CFLAGS=-Ijava_crw_demo -fno-strict-aliasing                                  \
         -fPIC -fno-omit-frame-pointer -W -Wall  -Wno-unused -Wno-parentheses \
@@ -24,3 +32,4 @@ libheapster.jnilib: heapster.o sampler.o util.o java_crw_demo/java_crw_demo.o
 clean:
 	rm -f *.o
 	rm -f libheapster.jnilib
+	rm -f java_crw_demo/*.o
