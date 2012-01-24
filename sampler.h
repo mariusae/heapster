@@ -37,6 +37,7 @@
 
 #include <assert.h>
 #include <string.h>
+#include <stdint.h>
 
 namespace tcmalloc {
 
