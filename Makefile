@@ -7,7 +7,7 @@ JAVA_HEADERS=/Developer/SDKs/MacOSX10.6.sdk/System/Library/Frameworks/JavaVM.fra
 endif
 
 ifeq ("$(OS)", "linux")
-JAVA_HOME=/usr/java/default/
+JAVA_HOME?=/usr/java/default
 JAVA_HEADERS=$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux
 endif
 
