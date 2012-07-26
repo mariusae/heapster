@@ -13,6 +13,7 @@
 #include <jvmti.h>
 #include <string.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include "java_crw_demo.h"
 
 #include <set>
