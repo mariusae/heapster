@@ -266,7 +266,6 @@ class Heapster {
         (void*)&Heapster::JNI_SetSamplingPeriod }
     };
 
-    klass = env->FindClass(HELPER_CLASS);
     if ((klass = env->FindClass(HELPER_CLASS)) == NULL)
       errx(3, "Failed to find the heapster helper class (%s)\n", HELPER_CLASS);
 
