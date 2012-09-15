@@ -56,7 +56,7 @@ size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
   const char* s = reinterpret_cast<const char*>(_s);
   size_t pos = 0;
   ssize_t res;
-		
+
   while (n > pos) {
     res = (f) (fd, s + pos, n - pos);
     switch (res) {
@@ -64,19 +64,19 @@ size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
         if (errno == EINTR || errno == EAGAIN)
           continue;
         return 0;
-		
-      case 0:
+
+    case 0:
         errno = EPIPE;
         return pos;
-		
-      default:
+
+    default:
         pos += (u_int)res;
     }
   }
-		
+
   return pos;
 }
-		
+
 void AtomicWrite(int fd, const char* buf, int n) {
  if (AtomicIO(write, fd, (const void*)buf, n) != (size_t)n) {
    perror("AtomicWrite");
@@ -95,7 +95,7 @@ class Monitor {
       errx(3, "jvmti error while creating monitor: %s\n", strerr);
     }
   }
-        
+
   jvmtiEnv* jvmti() {
     return jvmti_;
   }
@@ -208,7 +208,7 @@ class Heapster {
   static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
   }
-   
+
   static void JNICALL JVMTI_VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMDeath(env);
   }
@@ -449,7 +449,7 @@ class Heapster {
               break;
             }
           }
-   
+
           if (i == nframes)
             break;
         }
@@ -544,7 +544,7 @@ class Heapster {
     buf[4] = 0;
 
     prof.append(reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
-    
+
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
       for (Site* s = sites_[i]; s != NULL; s = s->next) {
         buf[0] = s->num_bytes;          // nsamples
@@ -620,14 +620,14 @@ class Heapster {
     if (sample_period_env != NULL)
       sample_period = strtoll(sample_period_env, NULL, 10);
 
-    jvmtiCapabilities c; 
+    jvmtiCapabilities c;
     memset(&c, 0, sizeof(c));
     c.can_generate_all_class_hook_events = 1;
     c.can_tag_objects                    = 1;
     c.can_generate_object_free_events    = 1;
     Assert(jvmti_->AddCapabilities(&c), "failed to add capabilities");
 
-    jvmtiEventCallbacks cb; 
+    jvmtiEventCallbacks cb;
     memset(&cb, 0, sizeof(cb));
     cb.VMStart           = &Heapster::JVMTI_VMStart;
     cb.VMDeath           = &Heapster::JVMTI_VMDeath;
