@@ -200,7 +200,7 @@ class Heapster {
                                                       int     period);
 #endif
 
-  // * Static JVMTI hooks
+  // Static JVMTI hooks.
   static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
   }
@@ -213,28 +213,42 @@ class Heapster {
     instance->ObjectFree(tag);
   }
 
-  static void JNICALL JVMTI_ClassFileLoadHook(
-      jvmtiEnv* jvmti, JNIEnv* env,
-      jclass class_being_redefined, jobject loader,
-      const char* name, jobject protection_domain,
-      jint class_data_len, const unsigned char* class_data,
-      jint* new_class_data_len, unsigned char** new_class_data) {
+  static void JNICALL JVMTI_ClassFileLoadHook(jvmtiEnv* jvmti,
+                                              JNIEnv* env,
+                                              jclass class_being_redefined,
+                                              jobject loader,
+                                              const char* name,
+                                              jobject protection_domain,
+                                              jint class_data_len,
+                                              const unsigned char* class_data,
+                                              jint* new_class_data_len,
+                                              unsigned char** new_class_data) {
+    //
     // Currently, we always instrument classes (but profiling is
     // optional, and won't leave bytecode unecessarily), but in the
     // future we may consider dynamic BCI, as per:
     //
     //   http://download.oracle.com/javase/6/docs/platform/jvmti/jvmti.html#bci
-    instance->ClassFileLoadHook(
-        jvmti, env, class_being_redefined, loader, name,
-        protection_domain, class_data_len, class_data,
-        new_class_data_len, new_class_data);
+    //
+    instance->ClassFileLoadHook(jvmti,
+                                env,
+                                class_being_redefined,
+                                loader,
+                                name,
+                                protection_domain,
+                                class_data_len,
+                                class_data,
+                                new_class_data_len,
+                                new_class_data);
   }
 
   // * Instance methods.
 
   Heapster(jvmtiEnv* jvmti)
-      : jvmti_(jvmti), monitor_(NULL),
-        sites_(NULL), class_count_(0),
+      : jvmti_(jvmti),
+        monitor_(NULL),
+        sites_(NULL),
+        class_count_(0),
         vm_started_(false) {
     Setup();
   }
