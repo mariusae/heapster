@@ -22,6 +22,10 @@
 #include "sampler.h"
 #include "util.h"
 
+#ifdef USE_DEFINECLASS
+#include "generated/Heapster-inl.h"
+#endif
+
 // NB: only works on little-endian machines
 
 // TODO
@@ -244,7 +248,12 @@ class Heapster {
   void VMStart(JNIEnv* env) {
     jclass klass;
 
-#ifndef USE_DEFINECLASS
+#ifdef USE_DEFINECLASS
+    klass = env->DefineClass(HELPER_CLASS,
+                             NULL,
+                             (jbyte const *)Heapster_class,
+                             Heapster_class_len);
+#else
     static JNINativeMethod registry[] = {
       { (char*)"_newObject",
         (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
@@ -259,9 +268,11 @@ class Heapster {
         (char*)"(I)V",
         (void*)&Heapster::JNI_setSamplingPeriod }
     };
+
+    klass = env->FindClass(HELPER_CLASS);
 #endif
 
-    if ((klass = env->FindClass(HELPER_CLASS)) == NULL)
+    if (klass == NULL)
       errx(3, "Failed to find the heapster helper class (%s)\n", HELPER_CLASS);
 
     { // Register natives.
