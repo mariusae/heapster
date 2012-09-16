@@ -3,3 +3,4 @@
 *.o
 *.so
 generated/*
+*.log
