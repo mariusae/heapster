@@ -2,3 +2,4 @@
 *.jnilib
 *.o
 *.so
+generated/*

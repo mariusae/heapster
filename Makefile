@@ -21,7 +21,7 @@ CFLAGS=-Ijava_crw_demo -fno-strict-aliasing                                  \
         -fPIC -fno-omit-frame-pointer -W -Wall  -Wno-unused -Wno-parentheses \
         -I$(JAVA_HEADERS)
 ifdef USE_DEFINECLASS
-CFLAGS+=-I$(GENERATED)
+CFLAGS+=-I$(GENERATED) -DUSE_DEFINECLASS
 endif
 LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
         -static-libgcc -shared
