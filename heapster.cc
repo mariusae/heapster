@@ -205,6 +205,10 @@ class Heapster {
     instance->VMStart(env);
   }
 
+  static void JNICALL JVMTI_VMInit(jvmtiEnv* jvmti, JNIEnv* env, jthread thread) {
+    instance->VMInit(env);
+  }
+
   static void JNICALL JVMTI_VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMDeath(env);
   }
@@ -299,6 +303,13 @@ class Heapster {
         errx(3, "Failed to register natives for %s", HELPER_CLASS);
 #endif
     }
+  }
+
+  void VMInit(JNIEnv* env) {
+    jclass klass = env->FindClass(HELPER_CLASS);
+    if (!klass) {
+      errx(3, "Failed to get handle to helper class - %s.\n", HELPER_CLASS);
+    }
 
     // Set the static field to hint the helper.
     jfieldID is_ready_field = env->GetStaticFieldID(klass, HELPER_FIELD_ISREADY, "I");
@@ -309,8 +320,9 @@ class Heapster {
     // If we ask for a static profile, make sure we turn profiling on
     // from the beginning.
     if (getenv("HEAPSTER_PROFILE") != NULL) {
-      jfieldID is_profiling_field = env->GetStaticFieldID(
-          klass, HELPER_FIELD_ISPROFILING, "Z");
+      jfieldID is_profiling_field = env->GetStaticFieldID(klass,
+                                                          HELPER_FIELD_ISPROFILING,
+                                                          "Z");
       if (is_profiling_field == NULL)
         errx(3, "Failed to get %s field\n", HELPER_FIELD_ISPROFILING);
 
@@ -652,6 +664,7 @@ class Heapster {
     jvmtiEventCallbacks cb;
     memset(&cb, 0, sizeof(cb));
     cb.VMStart           = &Heapster::JVMTI_VMStart;
+    cb.VMInit            = &Heapster::JVMTI_VMInit;
     cb.VMDeath           = &Heapster::JVMTI_VMDeath;
     cb.ObjectFree        = &Heapster::JVMTI_ObjectFree;
     cb.ClassFileLoadHook = &Heapster::JVMTI_ClassFileLoadHook;
@@ -659,7 +672,9 @@ class Heapster {
            "failed to set callbacks");
 
     jvmtiEvent events[] = {
-      JVMTI_EVENT_VM_START, JVMTI_EVENT_VM_DEATH,
+      JVMTI_EVENT_VM_START,
+      JVMTI_EVENT_VM_INIT,
+      JVMTI_EVENT_VM_DEATH,
       JVMTI_EVENT_CLASS_FILE_LOAD_HOOK,
       JVMTI_EVENT_OBJECT_FREE
     };
