@@ -38,7 +38,7 @@ $(OBJ): heapster.o sampler.o util.o java_crw_demo/java_crw_demo.o
 %.class: %.java
 	javac $<
 ifdef USE_DEFINECLASS
-	$(XXD) $(XXD_OPTIONS) $@ > $(GENERATED)/$<-inl.h
+	$(XXD) $(XXD_OPTIONS) $@ > $(GENERATED)/$*-inl.h
 endif
 
 clean:
