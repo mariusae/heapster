@@ -765,8 +765,8 @@ JNIEXPORT void JNICALL FUNC_IMPL(setSamplingPeriod)(JNIEnv *env,
 
 #ifdef USE_DEFINECLASS
 }
-#undef FUNC_IMPL
 #endif
+#undef FUNC_IMPL
 
 // Same hash table size as TCMalloc.
 const uint32_t Heapster::kHashTableSize = 179999;
