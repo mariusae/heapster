@@ -1,3 +1,5 @@
+[![Build Status](https://secure.travis-ci.org/mariusaeriksen/heapster.png)](http://travis-ci.org/mariusaeriksen/heapster)
+
 # Heapster
 
 Heapster provides an agent library to do heap profiling for JVM
