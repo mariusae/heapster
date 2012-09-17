@@ -217,16 +217,12 @@ class Heapster {
     instance->ObjectFree(tag);
   }
 
-  static void JNICALL JVMTI_ClassFileLoadHook(jvmtiEnv* jvmti,
-                                              JNIEnv* env,
-                                              jclass class_being_redefined,
-                                              jobject loader,
-                                              const char* name,
-                                              jobject protection_domain,
-                                              jint class_data_len,
-                                              const unsigned char* class_data,
-                                              jint* new_class_data_len,
-                                              unsigned char** new_class_data) {
+  static void JNICALL JVMTI_ClassFileLoadHook(
+      jvmtiEnv* jvmti, JNIEnv* env,
+      jclass class_being_redefined, jobject loader,
+      const char* name, jobject protection_domain,
+      jint class_data_len, const unsigned char* class_data,
+      jint* new_class_data_len, unsigned char** new_class_data) {
     //
     // Currently, we always instrument classes (but profiling is
     // optional, and won't leave bytecode unecessarily), but in the
@@ -249,10 +245,8 @@ class Heapster {
   // * Instance methods.
 
   Heapster(jvmtiEnv* jvmti)
-      : jvmti_(jvmti),
-        monitor_(NULL),
-        sites_(NULL),
-        class_count_(0),
+      : jvmti_(jvmti), monitor_(NULL),
+        sites_(NULL), class_count_(0),
         vm_started_(false) {
     Setup();
   }
