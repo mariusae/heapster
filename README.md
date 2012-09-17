@@ -9,7 +9,7 @@ profiling in a production setting.
 Currently it allows for profiling similar to the TCMalloc library,
 e.g.:
 
-    $ HEAPSTER_PROFILE=/tmp/OUT java -Xbootclasspath/a:. -agentlib:heapster Test
+    $ HEAPSTER_PROFILE=/tmp/OUT java -agentlib:heapster Test
     $ pprof /tmp/OUT
     Welcome to pprof!  For help, type 'help'.
     (pprof) top
@@ -23,11 +23,6 @@ By default, Heapster samples every 512 kB, this can be changed with
 the environment variable `HEAPSTER_SAMPLE_PERIOD` (in bytes).
 
 This is still work in progress.
-
-N.B. -  Heapster can be compiled (using the flag USE_DEFINECLASS) to not
-depend on an external helper class. This simplifies redistribution. In
-such a build specifying a boot class path (-Xbootclasspath/a) is not
-necessary.
 
 # Ostrich integration
 
