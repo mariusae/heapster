@@ -704,7 +704,7 @@ class Heapster {
 };
 
 #ifdef USE_DEFINECLASS
-#define FUNC_IMPL(name) Java_Heapster__l##name
+#define FUNC_IMPL(name) Java_Heapster__1##name
 extern "C" {
 #else
 #define FUNC_IMPL(name) Heapster::JNI_##name
