@@ -22,9 +22,7 @@
 #include "sampler.h"
 #include "util.h"
 
-#ifdef USE_DEFINECLASS
-#include "generated/Heapster-inl.h"
-#endif
+#include <Heapster-inl.h>
 
 // NB: only works on little-endian machines
 
@@ -181,25 +179,6 @@ class Heapster {
 
   static Heapster* instance;
 
-
-#ifndef USE_DEFINECLASS
-  // Static JNI hooks.
-  static JNIEXPORT void JNICALL JNI_newObject(JNIEnv  *env,
-                                              jclass   klass,
-                                              jthread  thread,
-                                              jobject  object);
-
-  static JNIEXPORT jbyteArray JNICALL JNI_dumpProfile(JNIEnv   *env,
-                                                      jclass    klass,
-                                                      jboolean  force_gc);
-
-  static JNIEXPORT void JNICALL JNI_clearProfile(JNIEnv* env, jclass klass);
-
-  static JNIEXPORT void JNICALL JNI_setSamplingPeriod(JNIEnv *env,
-                                                      jclass  klass,
-                                                      int     period);
-#endif
-
   // Static JVMTI hooks.
   static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
@@ -260,29 +239,10 @@ class Heapster {
   void VMStart(JNIEnv* env) {
     jclass klass;
 
-#ifdef USE_DEFINECLASS
     klass = env->DefineClass(HELPER_CLASS,
                              NULL,
                              (jbyte const *)Heapster_class,
                              Heapster_class_len);
-#else
-    static JNINativeMethod registry[] = {
-      { (char*)"_newObject",
-        (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
-        (void*)&Heapster::JNI_newObject },
-      { (char*)"_dumpProfile",
-        (char*)"(Z)[B",
-        (void*)&Heapster::JNI_dumpProfile },
-      { (char*)"_clearProfile",
-        (char*)"()V",
-        (void*)&Heapster::JNI_clearProfile },
-      { (char*)"_setSamplingPeriod",
-        (char*)"(I)V",
-        (void*)&Heapster::JNI_setSamplingPeriod }
-    };
-
-    klass = env->FindClass(HELPER_CLASS);
-#endif
 
     if (klass == NULL)
       errx(3, "Failed to find the heapster helper class (%s)\n", HELPER_CLASS);
@@ -290,12 +250,6 @@ class Heapster {
     { // Register natives.
       Lock l(monitor_);
       vm_started_ = true;
-
-#ifndef USE_DEFINECLASS
-      // TODO: Does this need to be inside of the lock?
-      if (env->RegisterNatives(klass, registry, arraysize(registry)) != 0)
-        errx(3, "Failed to register natives for %s", HELPER_CLASS);
-#endif
     }
   }
 
@@ -697,12 +651,9 @@ class Heapster {
   bool vm_started_;
 };
 
-#ifdef USE_DEFINECLASS
+
 #define FUNC_IMPL(name) Java_Heapster__1##name
 extern "C" {
-#else
-#define FUNC_IMPL(name) Heapster::JNI_##name
-#endif
 
 /*
  * Class:     Heapster
@@ -757,9 +708,7 @@ JNIEXPORT void JNICALL FUNC_IMPL(setSamplingPeriod)(JNIEnv *env,
   Heapster::instance->SetSamplingPeriod(period);
 }
 
-#ifdef USE_DEFINECLASS
 }
-#endif
 #undef FUNC_IMPL
 
 // Same hash table size as TCMalloc.

@@ -19,10 +19,8 @@ endif
 
 CFLAGS=-Ijava_crw_demo -fno-strict-aliasing                                  \
         -fPIC -fno-omit-frame-pointer -W -Wall  -Wno-unused -Wno-parentheses \
-        -I$(JAVA_HEADERS)
-ifdef USE_DEFINECLASS
-CFLAGS+=-I$(GENERATED) -DUSE_DEFINECLASS
-endif
+        -I$(JAVA_HEADERS) -I$(GENERATED)
+
 LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
         -static-libgcc -shared
 DEBUG=-g
@@ -37,9 +35,7 @@ $(OBJ): heapster.o sampler.o util.o java_crw_demo/java_crw_demo.o
 
 %.class: %.java
 	javac $<
-ifdef USE_DEFINECLASS
 	$(XXD) $(XXD_OPTIONS) $@ > $(GENERATED)/$*-inl.h
-endif
 
 clean:
 	rm -f *.o
