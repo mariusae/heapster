@@ -2,3 +2,5 @@
 *.jnilib
 *.o
 *.so
+generated/*
+*.log

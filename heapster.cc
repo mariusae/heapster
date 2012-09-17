@@ -22,6 +22,8 @@
 #include "sampler.h"
 #include "util.h"
 
+#include <Heapster-inl.h>
+
 // NB: only works on little-endian machines
 
 // TODO
@@ -56,7 +58,7 @@ size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
   const char* s = reinterpret_cast<const char*>(_s);
   size_t pos = 0;
   ssize_t res;
-		
+
   while (n > pos) {
     res = (f) (fd, s + pos, n - pos);
     switch (res) {
@@ -64,19 +66,19 @@ size_t AtomicIO(ssize_t (*f)(int, const void*, size_t),
         if (errno == EINTR || errno == EAGAIN)
           continue;
         return 0;
-		
-      case 0:
+
+    case 0:
         errno = EPIPE;
         return pos;
-		
-      default:
+
+    default:
         pos += (u_int)res;
     }
   }
-		
+
   return pos;
 }
-		
+
 void AtomicWrite(int fd, const char* buf, int n) {
  if (AtomicIO(write, fd, (const void*)buf, n) != (size_t)n) {
    perror("AtomicWrite");
@@ -95,7 +97,7 @@ class Monitor {
       errx(3, "jvmti error while creating monitor: %s\n", strerr);
     }
   }
-        
+
   jvmtiEnv* jvmti() {
     return jvmti_;
   }
@@ -177,38 +179,15 @@ class Heapster {
 
   static Heapster* instance;
 
-  // * Static JNI hooks.
-  static JNIEXPORT void JNICALL JNI_NewObject(
-      JNIEnv* env, jclass klass,
-      jthread thread, jobject o) {
-    instance->NewObject(env, klass, thread, o);
-  }
-
-  static JNIEXPORT jbyteArray JNICALL JNI_DumpProfile(
-      JNIEnv* env, jclass klass, jboolean force_gc) {
-    const string profile = instance->DumpProfile(force_gc);
-    jbyteArray buf = env->NewByteArray(profile.size());
-    // TODO: check error here?
-    env->SetByteArrayRegion(
-        buf, 0, profile.size(), (jbyte*)profile.data());
-
-    return buf;
-  }
-
-  static JNIEXPORT void JNICALL JNI_ClearProfile(JNIEnv* env, jclass klass) {
-    instance->ClearProfile();
-  }
-
-  static JNIEXPORT void JNICALL JNI_SetSamplingPeriod(
-      JNIEnv* env, jclass klass, int period) {
-    instance->SetSamplingPeriod(period);
-  }
-
-  // * Static JVMTI hooks
+  // Static JVMTI hooks.
   static void JNICALL JVMTI_VMStart(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMStart(env);
   }
-   
+
+  static void JNICALL JVMTI_VMInit(jvmtiEnv* jvmti, JNIEnv* env, jthread thread) {
+    instance->VMInit(env);
+  }
+
   static void JNICALL JVMTI_VMDeath(jvmtiEnv* jvmti, JNIEnv* env) {
     instance->VMDeath(env);
   }
@@ -223,15 +202,23 @@ class Heapster {
       const char* name, jobject protection_domain,
       jint class_data_len, const unsigned char* class_data,
       jint* new_class_data_len, unsigned char** new_class_data) {
+    //
     // Currently, we always instrument classes (but profiling is
     // optional, and won't leave bytecode unecessarily), but in the
     // future we may consider dynamic BCI, as per:
     //
     //   http://download.oracle.com/javase/6/docs/platform/jvmti/jvmti.html#bci
-    instance->ClassFileLoadHook(
-        jvmti, env, class_being_redefined, loader, name,
-        protection_domain, class_data_len, class_data,
-        new_class_data_len, new_class_data);
+    //
+    instance->ClassFileLoadHook(jvmti,
+                                env,
+                                class_being_redefined,
+                                loader,
+                                name,
+                                protection_domain,
+                                class_data_len,
+                                class_data,
+                                new_class_data_len,
+                                new_class_data);
   }
 
   // * Instance methods.
@@ -251,31 +238,25 @@ class Heapster {
 
   void VMStart(JNIEnv* env) {
     jclass klass;
-    static JNINativeMethod registry[] = {
-      { (char*)"_newObject",
-        (char*)"(Ljava/lang/Object;Ljava/lang/Object;)V",
-        (void*)&Heapster::JNI_NewObject },
-      { (char*)"_dumpProfile",
-        (char*)"(Z)[B",
-        (void*)&Heapster::JNI_DumpProfile },
-      { (char*)"_clearProfile",
-        (char*)"()V",
-        (void*)&Heapster::JNI_ClearProfile },
-      { (char*)"_setSamplingPeriod",
-        (char*)"(I)V",
-        (void*)&Heapster::JNI_SetSamplingPeriod }
-    };
 
-    if ((klass = env->FindClass(HELPER_CLASS)) == NULL)
+    klass = env->DefineClass(HELPER_CLASS,
+                             NULL,
+                             (jbyte const *)Heapster_class,
+                             Heapster_class_len);
+
+    if (klass == NULL)
       errx(3, "Failed to find the heapster helper class (%s)\n", HELPER_CLASS);
 
     { // Register natives.
       Lock l(monitor_);
       vm_started_ = true;
+    }
+  }
 
-      // TODO: Does this need to be inside of the lock?
-      if (env->RegisterNatives(klass, registry, arraysize(registry)) != 0)
-        errx(3, "Failed to register natives for %s", HELPER_CLASS);
+  void VMInit(JNIEnv* env) {
+    jclass klass = env->FindClass(HELPER_CLASS);
+    if (!klass) {
+      errx(3, "Failed to get handle to helper class - %s.\n", HELPER_CLASS);
     }
 
     // Set the static field to hint the helper.
@@ -287,8 +268,9 @@ class Heapster {
     // If we ask for a static profile, make sure we turn profiling on
     // from the beginning.
     if (getenv("HEAPSTER_PROFILE") != NULL) {
-      jfieldID is_profiling_field = env->GetStaticFieldID(
-          klass, HELPER_FIELD_ISPROFILING, "Z");
+      jfieldID is_profiling_field = env->GetStaticFieldID(klass,
+                                                          HELPER_FIELD_ISPROFILING,
+                                                          "Z");
       if (is_profiling_field == NULL)
         errx(3, "Failed to get %s field\n", HELPER_FIELD_ISPROFILING);
 
@@ -449,7 +431,7 @@ class Heapster {
               break;
             }
           }
-   
+
           if (i == nframes)
             break;
         }
@@ -544,7 +526,7 @@ class Heapster {
     buf[4] = 0;
 
     prof.append(reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
-    
+
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
       for (Site* s = sites_[i]; s != NULL; s = s->next) {
         buf[0] = s->num_bytes;          // nsamples
@@ -620,16 +602,17 @@ class Heapster {
     if (sample_period_env != NULL)
       sample_period = strtoll(sample_period_env, NULL, 10);
 
-    jvmtiCapabilities c; 
+    jvmtiCapabilities c;
     memset(&c, 0, sizeof(c));
     c.can_generate_all_class_hook_events = 1;
     c.can_tag_objects                    = 1;
     c.can_generate_object_free_events    = 1;
     Assert(jvmti_->AddCapabilities(&c), "failed to add capabilities");
 
-    jvmtiEventCallbacks cb; 
+    jvmtiEventCallbacks cb;
     memset(&cb, 0, sizeof(cb));
     cb.VMStart           = &Heapster::JVMTI_VMStart;
+    cb.VMInit            = &Heapster::JVMTI_VMInit;
     cb.VMDeath           = &Heapster::JVMTI_VMDeath;
     cb.ObjectFree        = &Heapster::JVMTI_ObjectFree;
     cb.ClassFileLoadHook = &Heapster::JVMTI_ClassFileLoadHook;
@@ -637,7 +620,9 @@ class Heapster {
            "failed to set callbacks");
 
     jvmtiEvent events[] = {
-      JVMTI_EVENT_VM_START, JVMTI_EVENT_VM_DEATH,
+      JVMTI_EVENT_VM_START,
+      JVMTI_EVENT_VM_INIT,
+      JVMTI_EVENT_VM_DEATH,
       JVMTI_EVENT_CLASS_FILE_LOAD_HOOK,
       JVMTI_EVENT_OBJECT_FREE
     };
@@ -665,6 +650,66 @@ class Heapster {
   int  class_count_;
   bool vm_started_;
 };
+
+
+#define FUNC_IMPL(name) Java_Heapster__1##name
+extern "C" {
+
+/*
+ * Class:     Heapster
+ * Method:    _dumpProfile
+ * Signature: (Z)[B
+ */
+JNIEXPORT jbyteArray JNICALL FUNC_IMPL(dumpProfile)(JNIEnv   *env,
+                                                    jclass    klass,
+                                                    jboolean  force_gc)
+{
+  const string profile = Heapster::instance->DumpProfile(force_gc);
+
+  jbyteArray buf = env->NewByteArray(profile.size());
+  // TODO: check error here?
+  env->SetByteArrayRegion(buf, 0, profile.size(), (jbyte*)profile.data());
+
+  return buf;
+}
+
+/*
+ * Class:     Heapster
+ * Method:    _newObject
+ * Signature: (Ljava/lang/Object;Ljava/lang/Object;)V
+ */
+JNIEXPORT void JNICALL FUNC_IMPL(newObject)(JNIEnv  *env,
+                                            jclass   klass,
+                                            jobject  thread,
+                                            jobject  object)
+{
+  Heapster::instance->NewObject(env, klass, thread, object);
+}
+
+/*
+ * Class:     Heapster
+ * Method:    _clearProfile
+ * Signature: ()V
+ */
+JNIEXPORT void JNICALL FUNC_IMPL(clearProfile)(JNIEnv *env, jclass klass)
+{
+  Heapster::instance->ClearProfile();
+}
+
+/*
+ * Class:     Heapster
+ * Method:    _setSamplingPeriod
+ * Signature: (I)V
+ */
+JNIEXPORT void JNICALL FUNC_IMPL(setSamplingPeriod)(JNIEnv *env,
+                                                    jclass  klass,
+                                                    jint    period)
+{
+  Heapster::instance->SetSamplingPeriod(period);
+}
+
+}
+#undef FUNC_IMPL
 
 // Same hash table size as TCMalloc.
 const uint32_t Heapster::kHashTableSize = 179999;
