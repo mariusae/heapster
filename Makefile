@@ -7,8 +7,8 @@ XXD_OPTIONS=-i
 
 ifeq ("$(OS)", "darwin")
 JAVA_HOME=$(shell /usr/libexec/java_home)
-JAVA_HEADERS=/Developer/SDKs/MacOSX10.6.sdk/System/Library/Frameworks/JavaVM.framework/Versions/1.6.0/Headers/
-OBJ=libheapster.jnilib
+JAVA_HEADERS=$(JAVA_HOME)/include -I$(JAVA_HOME)/include/darwin
+OBJ=libheapster.dylib
 endif
 
 ifeq ("$(OS)", "linux")
