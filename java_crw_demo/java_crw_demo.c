@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2009, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,15 @@
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
+/*
+ * This source code is provided to illustrate the usage of a given feature
+ * or technique and has been deliberately simplified. Additional steps
+ * required for a production-quality application, such as security checks,
+ * input validation and proper error handling, might not be present in
+ * this sample code.
+ */
+
 
 /* Class reader writer (java_crw_demo) for instrumenting bytecodes */
 
@@ -61,12 +70,20 @@
 
 /* Macros over error functions to capture line numbers */
 
-#define CRW_FATAL(ci, message) fatal_error(ci, message, __FILE__, __LINE__)
+/* Fatal error used in all builds. */
+
+/* Use THIS_FILE when it is available. */
+#ifndef THIS_FILE
+    #define THIS_FILE "java_crw.demo.c" /* Never use __FILE__ */
+#endif
+
+#define CRW_FATAL(ci, message) fatal_error(ci, message, THIS_FILE, __LINE__)
 
 #if defined(DEBUG) || !defined(NDEBUG)
 
+  /* This assert macro is only used in the debug builds. */
   #define CRW_ASSERT(ci, cond) \
-        ((cond)?(void)0:assert_error(ci, #cond, __FILE__, __LINE__))
+        ((cond)?(void)0:assert_error(ci, #cond, THIS_FILE, __LINE__))
 
 #else
 
@@ -79,6 +96,12 @@
 #define CRW_ASSERT_CI(ci) CRW_ASSERT(ci, ( (ci) != NULL && \
                          (ci)->input_position <= (ci)->input_len && \
                          (ci)->output_position <= (ci)->output_len) )
+
+#define BUFSIZE 256
+
+#ifdef _WIN32
+#define snprintf(buffer, count, format, ...) _snprintf_s(buffer, count, _TRUNCATE, format, ##__VA_ARGS__)
+#endif
 
 /* Typedefs for various integral numbers, just for code clarity */
 
@@ -240,8 +263,8 @@ fatal_error(CrwClassImage *ci, const char *message, const char *file, int line)
         /* Normal operation should NEVER reach here */
         /* NO CRW FATAL ERROR HANDLER! */
         (void)fprintf(stderr, "CRW: %s [%s:%d]\n", message, file, line);
-        abort();
     }
+    abort();
 }
 
 #if defined(DEBUG) || !defined(NDEBUG)
@@ -642,6 +665,7 @@ cpool_setup(CrwClassImage *ci)
         unsigned int    index2;
         unsigned        len;
         char *          utf8;
+        char message[BUFSIZE];
 
         ipos    = i;
         index1  = 0;
@@ -680,8 +704,20 @@ cpool_setup(CrwClassImage *ci)
                 utf8[len] = 0;
                 write_bytes(ci, (void*)utf8, len);
                 break;
+            case JVM_CONSTANT_MethodType:
+                index1 = copyU2(ci);
+                break;
+            case JVM_CONSTANT_MethodHandle:
+                index1 = copyU1(ci);
+                index2 = copyU2(ci);
+                break;
+            case JVM_CONSTANT_InvokeDynamic:
+                index1 = copyU2(ci);
+                index2 = copyU2(ci);
+                break;
             default:
-                CRW_FATAL(ci, "Unknown constant");
+                snprintf(message, BUFSIZE, "Unknown tag: %d, at ipos %hu", tag, ipos);
+                CRW_FATAL(ci, message);
                 break;
         }
         fillin_cpool_entry(ci, ipos, tag, index1, index2, (const char *)utf8, len);
@@ -2262,9 +2298,9 @@ inject_class(struct CrwClassImage *ci,
     classfileMinorVersion = copyU2(ci);
     /* major version number not used */
     classfileMajorVersion = copyU2(ci);
-    /* CRW_ASSERT(ci,  (classfileMajorVersion <= JVM_CLASSFILE_MAJOR_VERSION) || */
-    /*                ((classfileMajorVersion == JVM_CLASSFILE_MAJOR_VERSION) && */
-    /*                 (classfileMinorVersion <= JVM_CLASSFILE_MINOR_VERSION))); */
+    CRW_ASSERT(ci,  (classfileMajorVersion <= JVM_CLASSFILE_MAJOR_VERSION) ||
+                   ((classfileMajorVersion == JVM_CLASSFILE_MAJOR_VERSION) &&
+                    (classfileMinorVersion <= JVM_CLASSFILE_MINOR_VERSION)));
 
     cpool_setup(ci);
 
