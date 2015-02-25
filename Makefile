@@ -22,7 +22,7 @@ CFLAGS=-Ijava_crw_demo -fno-strict-aliasing                                  \
         -I$(JAVA_HEADERS) -I$(GENERATED)
 
 LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
-        -static-libgcc -shared
+        -shared
 DEBUG=-g
 
 all: Heapster.class $(OBJ)
