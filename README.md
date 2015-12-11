@@ -1,10 +1,10 @@
-[![Build Status](https://secure.travis-ci.org/mariusaeriksen/heapster.png)](http://travis-ci.org/mariusaeriksen/heapster)
+[![Build Status](https://secure.travis-ci.org/mariusae/heapster.png)](http://travis-ci.org/mariusae/heapster)
 
 # Heapster
 
 Heapster provides an agent library to do heap profiling for JVM
 processes with output compatible with
-[Google perftools](http://code.google.com/p/google-perftools/). The
+[Google perftools](https://github.com/gperftools/gperftools). The
 goal of Heapster is to be able to do meaningful (sampled) heap
 profiling in a production setting.
 
@@ -26,12 +26,17 @@ the environment variable `HEAPSTER_SAMPLE_PERIOD` (in bytes).
 
 This is still work in progress.
 
-# Ostrich integration
+# Installation (Example)
 
-If you use [Ostrich](https://github.com/twitter/ostrich), and run your
+    $ make
+    $ cp libheapster.dylib /usr/local/lib/
+
+# Twitter Server Integration
+
+If you use [Twitter Server](https://github.com/twitter/twitter-server), and run your
 program with heapster, you can generate runtime heap profiles like so:
 
-    $ curl 'localhost:9990/pprof/heap?pause=10&sample_period=1024' > /tmp/prof
+    $ curl 'localhost:9990/admin/pprof/heap?pause=10&sample_period=1024' > /tmp/prof
 
 This will collect heap growth for 10 seconds, with a sampling period
 of 1kB.
