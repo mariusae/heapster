@@ -163,6 +163,15 @@ class Heapster {
       delete[] stack;
     }
 
+    Site(const Site& _other)
+        : next(NULL), hash(_other.hash), active(_other.active),
+          nframes(_other.nframes), stack(new jmethodID[_other.nframes]),
+          num_allocs(_other.num_allocs), num_bytes(_other.num_bytes) {
+      for (int i = 0; i < nframes; ++i) {
+        stack[i] = _other.stack[i];
+      }
+    }
+
     Site*      next;
     long       hash;
     bool       active;
@@ -458,7 +467,8 @@ class Heapster {
         warnx("Failed to force garbage collection.\n");
     }
 
-    Lock l(monitor_);
+    Site** sites_copy = CopyProfile();
+
     string prof = "";
 
     // TODO: change "binary" to main class name?
@@ -468,7 +478,7 @@ class Heapster {
     // method names.)
     set<jmethodID> seen_methods;
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
-      for (Site* s = sites_[i]; s != NULL; s = s->next) {
+      for (Site* s = sites_copy[i]; s != NULL; s = s->next) {
         // Don't print for empty sites.
         if (s->num_bytes <= 0)
           continue;
@@ -528,7 +538,7 @@ class Heapster {
     prof.append(reinterpret_cast<char*>(buf), sizeof(buf[0]) * 5);
 
     for (uint32_t i = 0; i < kHashTableSize; ++i) {
-      for (Site* s = sites_[i]; s != NULL; s = s->next) {
+      for (Site* s = sites_copy[i]; s != NULL; s = s->next) {
         buf[0] = s->num_bytes;          // nsamples
         buf[1] = s->nframes;            // depth
         memcpy(&buf[2], s->stack, s->nframes * sizeof(s->stack[0]));
@@ -542,7 +552,30 @@ class Heapster {
       }
     }
 
+    DeallocProfile(sites_copy);
+
     return prof;
+  }
+
+  // If we are deallocating a copy, we can simply free all entries, rather than
+  // preserving those that are active (num_bytes > 0).
+  void DeallocProfile(Site** sites) {
+    const bool is_a_copy = sites != sites_;
+    for (uint32_t i = 0; i < kHashTableSize; ++i) {
+      Site* s = sites[i];
+      while (s != NULL) {
+        Site* next = s->next;
+
+        if (s->num_bytes == 0 || is_a_copy)
+          delete s;
+        else
+          s->active = false;
+
+        s = next;
+      }
+    }
+
+    delete[] sites;
   }
 
   void ClearProfile() {
@@ -552,28 +585,28 @@ class Heapster {
     // currently empty sites ourselves. But their linked list will
     // never be used (the ``sites_'') reference is lost & so this is
     // safe.
-
-    for (uint32_t i = 0; i < kHashTableSize; ++i) {
-      Site* s = sites_[i];
-      while (s != NULL) {
-        Site* next = s->next;
-
-        if (s->num_bytes == 0)
-          delete s;
-        else
-          s->active = false;
-
-        s = next;
-      }
-    }
-
-    delete[] sites_;
+    DeallocProfile(sites_);
     AllocProfile();
   }
 
   void AllocProfile() {
     sites_ = new Site*[kHashTableSize];
     memset(sites_, 0, sizeof(Site*) * kHashTableSize);
+  }
+
+  Site** CopyProfile() {
+    Site** copy = new Site*[kHashTableSize];
+    memset(copy, 0, sizeof(Site*) * kHashTableSize);
+    Lock l(monitor_);
+    for (uint32_t bucket = 0; bucket < kHashTableSize; ++bucket) {
+      Site** prev_site_addr = &copy[bucket];
+      for (Site* site = sites_[bucket]; site != NULL; site = site->next) {
+        Site* site_copy = new Site(*site);
+        *prev_site_addr = site_copy;
+        prev_site_addr = &site_copy->next;
+      }
+    }
+    return copy;
   }
 
   void SetSamplingPeriod(int period) {
