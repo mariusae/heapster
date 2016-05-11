@@ -1,4 +1,5 @@
 CC=gcc
+CXX=g++
 OS=$(shell uname -s | tr '[A-Z]' '[a-z]')
 GENERATED=generated
 
@@ -6,8 +7,10 @@ XXD=xxd
 XXD_OPTIONS=-i
 
 ifeq ("$(OS)", "darwin")
+CC=clang
+CXX=clang++
 JAVA_HOME=$(shell /usr/libexec/java_home)
-JAVA_HEADERS=/Developer/SDKs/MacOSX10.6.sdk/System/Library/Frameworks/JavaVM.framework/Versions/1.6.0/Headers/
+JAVA_HEADERS=$(JAVA_HOME)/include -I$(JAVA_HOME)/include/darwin
 OBJ=libheapster.jnilib
 endif
 
@@ -22,16 +25,16 @@ CFLAGS=-Ijava_crw_demo -fno-strict-aliasing                                  \
         -I$(JAVA_HEADERS) -I$(GENERATED)
 
 LDFLAGS=-fno-strict-aliasing -fPIC -fno-omit-frame-pointer \
-        -static-libgcc -shared
+        -shared -undefined dynamic_lookup
 DEBUG=-g
 
 all: Heapster.class $(OBJ)
 
 $(OBJ): heapster.o sampler.o util.o java_crw_demo/java_crw_demo.o
-	g++ $(DEBUG) $(LDFLAGS) -o $@ $^ -lc
+	$(CXX) $(DEBUG) $(LDFLAGS) -o $@ $^ -lc
 
 %.o: %.cc
-	g++ $(DEBUG) $(CFLAGS) -o $@ -c $<
+	$(CXX) $(DEBUG) $(CFLAGS) -o $@ -c $<
 
 %.class: %.java
 	javac $<
